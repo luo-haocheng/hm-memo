@@ -25,29 +25,37 @@ struct MemoEditView {
   @Builder
   toolBar() {
     Row({ space: 12 }) {
-      Image(this.editorController.currRecordIdx < 1 ?
-        $r('app.media.undo_expire') :
-        $r('app.media.undo_effect')
-      )
+      Image($r('app.media.undo'))
         .width(40)
         .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor($r('sys.color.font_primary'))
+        .backgroundColor($r('sys.color.background_secondary'))
+        .opacity(this.editorController.currRecordIdx <= 0 ? 0.3 : 1)
         .onClick(() => {
           this.editorController.unDo();
         });
-
-      Image(this.editorController.currRecordIdx >= this.editorController.historyRecords.length - 1 ?
-        $r('app.media.redo_expire') :
-        $r('app.media.redo_effect')
-      )
+     
+      Image($r('app.media.redo'))
         .width(40)
         .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor($r('sys.color.font_primary'))
+        .backgroundColor($r('sys.color.background_secondary'))
+        .opacity(this.editorController.currRecordIdx >= this.editorController.historyRecords.length - 1 ? 0.3 : 1)
         .onClick(() => {
           this.editorController.reDo();
         });
 
-      Image($r('app.media.save'))
+      Image($r('app.media.checkmark'))
         .width(40)
         .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor($r('sys.color.font_primary'))
+        .backgroundColor($r('sys.color.background_secondary'))
         .onClick(() => {
           // todo;
         });
