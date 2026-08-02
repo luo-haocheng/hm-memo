@@ -1,6 +1,6 @@
 {
   "module": {
-    "name": "rich_editor_test",
+    "name": "memo_editor_test",
     "type": "feature",
     "deviceTypes": [
       "default"

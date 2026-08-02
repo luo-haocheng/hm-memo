@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.example.hmnote",
+    "bundleName": "com.example.hm_memo",
     "vendor": "example",
     "versionCode": 1000000,
     "versionName": "1.0.0",

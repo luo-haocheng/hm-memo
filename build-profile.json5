@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_sILW9vTt2fF5n3sRIg3g51gsxgwOy2YmVi9S5c6-T6A=.cer",
+          "certpath": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001AD7883FA04B108F29F41CF440CBBF4A20FBBEB149FDE281B0B8383F7C0BA04E8D24D365272064",
-          "profile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_sILW9vTt2fF5n3sRIg3g51gsxgwOy2YmVi9S5c6-T6A=.p7b",
+          "keyPassword": "0000001B2AF9F8C8605406DCA8340CBDCA9BD1540ADC8FC17B57426501B01C0F80C07B5539B85E404F3CD0",
+          "profile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_sILW9vTt2fF5n3sRIg3g51gsxgwOy2YmVi9S5c6-T6A=.p12",
-          "storePassword": "0000001A440E0952C6CECD6B72CB0ADE2E96808EB11541A943177F05C25F94CED7D4F49118EE98D91AD7"
+          "storeFile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.p12",
+          "storePassword": "0000001B0BCBDE48F5968E7524F652F4A1565BBD581583C170FCED279EEA48E954D29B294256199612B516"
         }
       }
     ],
@@ -53,8 +53,8 @@
       ]
     },
     {
-      "name": "rich_editor",
-      "srcPath": "./components/rich_editor",
+      "name": "memo_editor",
+      "srcPath": "./components/memo_editor"
     }
   ]
 }

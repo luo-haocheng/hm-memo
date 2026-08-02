@@ -34,7 +34,7 @@ struct Index {
   }
 
   @Builder
-  addNoteBuilder() {
+  addMemoBuilder() {
     Row() {
       SymbolGlyph($r('sys.symbol.plus'))
         .fontSize(35)
@@ -48,7 +48,7 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .position({ right: 32, bottom: 40 })
     .onClick(() => {
-      this.appPathStack.pushPath({ name: 'NoteEdit' });
+      this.appPathStack.pushPath({ name: 'MemoEdit' });
     });
   }
 
@@ -59,7 +59,7 @@ struct Index {
 
         this.searchBar();
 
-        this.addNoteBuilder();
+        this.addMemoBuilder();
       }
       .width('100%')
       .height('100%')

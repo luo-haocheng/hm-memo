@@ -6,14 +6,14 @@ import { image } from '@kit.ImageKit';
 import { ChangeRecord } from '../model/ChangeRecord';
 
 @ObservedV2
-export class RichEditorController {
-  private static _instance: RichEditorController;
+export class MemoEditorController {
+  private static _instance: MemoEditorController;
 
   public static get instance() {
-    if (!RichEditorController._instance) {
-      RichEditorController._instance = new RichEditorController();
+    if (!MemoEditorController._instance) {
+      MemoEditorController._instance = new MemoEditorController();
     }
-    return RichEditorController._instance;
+    return MemoEditorController._instance;
   }
 
   titleController: TextInputController = new TextInputController();

@@ -2,7 +2,7 @@
   "modelVersion": "6.1.1",
   "description": "Please describe the basic information.",
   "dependencies": {
-    "rich_editor": "file:./components/rich_editor"
+    "memo_editor": "file:./components/memo_editor"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.25",

@@ -1,6 +1,6 @@
 {
   "module": {
-    "name": "rich_editor",
+    "name": "memo_editor",
     "type": "har",
     "deviceTypes": [
       "default"

@@ -1,9 +1,9 @@
 {
   "routerMap": [
     {
-      "name": "NoteEdit",
-      "buildFunction":  "NoteEditBuilder",
-      "pageSourceFile": "src/main/ets/pages/NoteEditView.ets"
+      "name": "MemoEdit",
+      "buildFunction":  "MemoEditBuilder",
+      "pageSourceFile": "src/main/ets/pages/MemoEditView.ets"
     }
   ]
 }

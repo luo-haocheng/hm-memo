@@ -1,17 +1,16 @@
-import { RichEditorArea, RichEditorController } from 'rich_editor';
+import { MemoEditorArea, MemoEditorController } from 'memo_editor';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
-import { CHECK_MARK_UTF8, RING_UTF8 } from 'rich_editor/src/main/ets/common/Constants';
 
 @Builder
-export function NoteEditBuilder() {
-  NoteEditView();
+export function MemoEditBuilder() {
+  MemoEditView();
 }
 
 @ComponentV2
-struct NoteEditView {
-  @Local noteTitle: string = '';
-  @Local noteContent: MutableStyledString = new MutableStyledString(`${RING_UTF8}\n${CHECK_MARK_UTF8}`);
-  private noteEditorController: RichEditorController = RichEditorController.instance;
+struct MemoEditView {
+  @Local memoTitle: string = '';
+  @Local memoContent: MutableStyledString = new MutableStyledString('');
+  private editorController: MemoEditorController = MemoEditorController.instance;
 
   aboutToAppear(): void {
     // 启用压缩模式避让软键盘
@@ -26,24 +25,24 @@ struct NoteEditView {
   @Builder
   toolBar() {
     Row({ space: 12 }) {
-      Image(this.noteEditorController.currRecordIdx < 1 ?
+      Image(this.editorController.currRecordIdx < 1 ?
         $r('app.media.undo_expire') :
         $r('app.media.undo_effect')
       )
         .width(40)
         .height(40)
         .onClick(() => {
-          this.noteEditorController.unDo();
+          this.editorController.unDo();
         });
 
-      Image(this.noteEditorController.currRecordIdx >= this.noteEditorController.historyRecords.length - 1 ?
+      Image(this.editorController.currRecordIdx >= this.editorController.historyRecords.length - 1 ?
         $r('app.media.redo_expire') :
         $r('app.media.redo_effect')
       )
         .width(40)
         .height(40)
         .onClick(() => {
-          this.noteEditorController.reDo();
+          this.editorController.reDo();
         });
 
       Image($r('app.media.save'))
@@ -61,9 +60,9 @@ struct NoteEditView {
 
   build() {
     NavDestination() {
-      RichEditorArea({
-        noteTitle: this.noteTitle,
-        noteContent: this.noteContent,
+      MemoEditorArea({
+        memoTitle: this.memoTitle,
+        memoContent: this.memoContent,
       });
     }
     .menus(this.toolBar());

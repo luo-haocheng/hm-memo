@@ -1,14 +1,14 @@
 import { COLOR_LIST, HIGHLIGHT_COLOR_FILTER, ORIGIN_COLOR_FILTER } from '../common/Constants';
-import { RichEditorController } from '../controller/RichEditorController';
+import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { LengthMetrics } from '@kit.ArkUI';
 
 @ComponentV2
-export struct RichEditorArea {
+export struct MemoEditorArea {
   @Local isEditing: boolean = false;
-  @Param @Once @Require noteTitle: string;
-  @Param @Once @Require noteContent: MutableStyledString;
-  private controller: RichEditorController = RichEditorController.instance;
+  @Param @Once @Require memoTitle: string;
+  @Param @Once @Require memoContent: MutableStyledString;
+  private controller: MemoEditorController = MemoEditorController.instance;
 
   @Builder
   fontStyleBar() {
@@ -193,7 +193,7 @@ export struct RichEditorArea {
           Column() {
             TextInput({
               placeholder: '标题',
-              text: this.noteTitle,
+              text: this.memoTitle,
               controller: this.controller.titleController,
             })
               .height(40)
@@ -217,8 +217,8 @@ export struct RichEditorArea {
                     this.controller.onContentChanged();
                   }
                 });
-                this.controller.contentController.setStyledString(this.noteContent);
-                this.controller.addHistoryRecord(this.noteContent);
+                this.controller.contentController.setStyledString(this.memoContent);
+                this.controller.addHistoryRecord(this.memoContent);
               })
               .onEditingChange((editStatus) => {
                 this.isEditing = editStatus;
