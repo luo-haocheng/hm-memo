@@ -8,6 +8,8 @@ export struct MemoEditorArea {
   @Local isEditing: boolean = false;
   @Param @Once @Require memoTitle: string;
   @Param @Once @Require memoContent: MutableStyledString;
+  @Event titleChange: (title: string) => void = () => {
+  };
   private controller: MemoEditorController = MemoEditorController.instance;
 
   @Builder
@@ -207,7 +209,11 @@ export struct MemoEditorArea {
               .placeholderFont({ size: 20, weight: FontWeight.Bold })
               .borderRadius(0)
               .margin({ top: 12 })
-              .backgroundColor(Color.Transparent);
+              .backgroundColor(Color.Transparent)
+              .onChange((value) => {
+                this.memoTitle = value;
+                this.titleChange(value);
+              });
 
             RichEditor({ controller: this.controller.contentController })
               .width('100%')

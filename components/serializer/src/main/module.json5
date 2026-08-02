@@ -1,0 +1,9 @@
+{
+  "module": {
+    "name": "serializer",
+    "type": "har",
+    "deviceTypes": [
+      "default"
+    ]
+  }
+}

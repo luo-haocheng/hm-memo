@@ -55,6 +55,14 @@
     {
       "name": "memo_editor",
       "srcPath": "./components/memo_editor"
+    },
+    {
+      "name": "serializer",
+      "srcPath": "./components/serializer",
+    },
+    {
+      "name": "data_source",
+      "srcPath": "./common/data_source"
     }
   ]
 }

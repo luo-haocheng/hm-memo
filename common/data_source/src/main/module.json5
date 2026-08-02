@@ -1,0 +1,9 @@
+{
+  "module": {
+    "name": "data_source",
+    "type": "har",
+    "deviceTypes": [
+      "default"
+    ]
+  }
+}

@@ -2,7 +2,9 @@
   "modelVersion": "6.1.1",
   "description": "Please describe the basic information.",
   "dependencies": {
-    "memo_editor": "file:./components/memo_editor"
+    "memo_editor": "file:./components/memo_editor",
+    "serializer": "file:./components/serializer",
+    "data_source": "file:./common/data_source",
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.25",

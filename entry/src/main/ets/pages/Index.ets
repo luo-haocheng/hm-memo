@@ -1,7 +1,24 @@
+import { Memo } from 'memo_editor';
+import { KVStore } from 'serializer';
+import { MemoService } from 'data_source';
+import { distributedKVStore } from '@kit.ArkData';
+
 @Entry
 @ComponentV2
 struct Index {
+  @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
+  memoService: MemoService = MemoService.instance;
+  uiContext: UIContext = this.getUIContext() as UIContext;
+  securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
+
+  async aboutToAppear() {
+    // 创建KV数据库
+    this.kvStore = new KVStore();
+    this.kvStore.kvStore = await this.kvStore.createKVStore(false, this.securityLevel, this.uiContext);
+    // 读取笔记
+    this.memoService.loadEffectiveNote(this.kvStore);
+  }
 
   @Builder
   headerArea() {
@@ -50,6 +67,11 @@ struct Index {
     .onClick(() => {
       this.appPathStack.pushPath({ name: 'MemoEdit' });
     });
+  }
+
+  @Builder
+  cardItem(item: Memo, maxLines: number) {
+
   }
 
   build() {

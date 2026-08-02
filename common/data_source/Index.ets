@@ -1,0 +1,1 @@
+export { MemoService } from './src/main/ets/MemoService';
