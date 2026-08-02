@@ -1,4 +1,4 @@
-import { COLOR_LIST, HIGHLIGHT_COLOR_FILTER, ORIGIN_COLOR_FILTER } from '../common/Constants';
+import { COLOR_LIST, DEFAULT_FONT_SIZE, HIGHLIGHT_COLOR_FILTER, ORIGIN_COLOR_FILTER, } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { LengthMetrics } from '@kit.ArkUI';
@@ -184,6 +184,8 @@ export struct MemoEditorArea {
       fontColor: COLOR_LIST[this.controller.colorIdx],
       fontSize: this.controller.fontSize,
     }));
+    this.controller.setTextStyle(StyledStringKey.LINE_HEIGHT,
+      new LineHeightStyle(LengthMetrics.vp(this.controller.fontSize.value * 1.5)));
   }
 
   build() {
@@ -212,11 +214,21 @@ export struct MemoEditorArea {
               .barState(BarState.Off)
               .placeholder('开始书写你的笔记', { fontColor: $r('sys.color.font_tertiary') })
               .onReady(() => {
+                // 预设文本输入样式
+                this.controller.contentController.setTypingStyle({
+                  fontSize: DEFAULT_FONT_SIZE,
+                  fontStyle: FontStyle.Normal,
+                  fontWeight: FontWeight.Normal,
+                  lineHeight: DEFAULT_FONT_SIZE * 1.5,
+                  fontColor: $r('sys.color.font_primary'),
+                });
+                // 注册编辑区内容改变回调
                 this.controller.contentController.onContentChanged({
                   onDidChange: () => {
                     this.controller.onContentChanged();
                   }
                 });
+                // 设置备忘内容，并添加到操作记录。
                 this.controller.contentController.setStyledString(this.memoContent);
                 this.controller.addHistoryRecord(this.memoContent);
               })

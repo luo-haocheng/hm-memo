@@ -265,7 +265,7 @@ export class MemoEditorController {
         value: pixelMap,
         objectFit: ImageFit.Auto,
         size: { width: width, height: height },
-        layoutStyle: { borderRadius: LengthMetrics.vp(12), margin: { top: 8, bottom: 8 } },
+        layoutStyle: { borderRadius: LengthMetrics.vp(12), margin: { top: 12, bottom: 12 } },
       }));
       // 获取当前的富文本内容
       const styledString = this.contentController.getStyledString();
