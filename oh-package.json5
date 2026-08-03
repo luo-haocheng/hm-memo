@@ -5,6 +5,7 @@
     "memo_editor": "file:./components/memo_editor",
     "serializer": "file:./components/serializer",
     "data_source": "file:./common/data_source",
+    "utils": "file:./common/utils",
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.25",

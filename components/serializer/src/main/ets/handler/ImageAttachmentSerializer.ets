@@ -4,8 +4,9 @@ import { SerializedStyledStringValue } from '../utils/SerializaUtil';
 
 export interface SerializedImageAttachment extends SerializedStyledStringValue {
   uri: string;
-  size?: SerializeSizeOptions;
   objectFit?: ImageFit;
+  size?: SerializeSizeOptions;
+  layoutStyle?: ImageAttachmentLayoutStyle;
 }
 
 declare interface SerializeSizeOptions {
@@ -17,14 +18,16 @@ export class ImageAttachmentSerializer {
   static serialize(value: ImageAttachment, uri: string, uiContext: UIContext): SerializedImageAttachment {
     return {
       uri: uri,
-      size: ImageAttachmentSerializer.serializeSize(value.size, uiContext),
       objectFit: value.objectFit,
+      layoutStyle: value.layoutStyle,
+      size: ImageAttachmentSerializer.serializeSize(value.size, uiContext),
     };
   }
 
   static deserialize(data: SerializedImageAttachment): ImageAttachment {
     return new ImageAttachment({
       value: ImageAttachmentSerializer.loadPixelMap(data.uri),
+      layoutStyle: data.layoutStyle,
       size: {
         width: data.size?.width,
         height: data.size?.height

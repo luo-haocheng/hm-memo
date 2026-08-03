@@ -78,6 +78,7 @@ export class MemoEditorController {
   addHistoryRecord(styledString: MutableStyledString) {
     this.historyRecords = this.historyRecords.slice(0, ++this.currRecordIdx);
     this.historyRecords.push(new ChangeRecord(styledString));
+    console.info(`Current Record Index: ${this.currRecordIdx}, ${this.historyRecords.length}`);
   }
 
   /**
@@ -205,6 +206,18 @@ export class MemoEditorController {
           }
         }
       });
+  }
+
+  /**
+   * 恢复初始状态
+   */
+  initState() {
+    this.colorIdx = 0;
+    this.isBold = false;
+    this.isItalics = false;
+    this.isUnderline = false;
+    this.showToolBarIndex = 0;
+    this.alignStyle = TextAlign.Start;
   }
 
   private async selectPhoto(): Promise<Array<string> | undefined> {

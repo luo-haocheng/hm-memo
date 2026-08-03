@@ -10,6 +10,8 @@ export struct MemoEditorArea {
   @Param @Once @Require memoContent: MutableStyledString;
   @Event titleChange: (title: string) => void = () => {
   };
+  @Event saveStatusChange: (isSaved: boolean) => void = () => {
+  };
   private controller: MemoEditorController = MemoEditorController.instance;
 
   @Builder
@@ -210,6 +212,9 @@ export struct MemoEditorArea {
               .borderRadius(0)
               .margin({ top: 12 })
               .backgroundColor(Color.Transparent)
+              .onClick(() => {
+                this.saveStatusChange(false);
+              })
               .onChange((value) => {
                 this.memoTitle = value;
                 this.titleChange(value);
@@ -240,6 +245,7 @@ export struct MemoEditorArea {
               })
               .onEditingChange((editStatus) => {
                 this.isEditing = editStatus;
+                this.saveStatusChange(false);
                 if (!editStatus) {
                   this.controller.showToolBarIndex = 0;
                 }
