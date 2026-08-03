@@ -6,7 +6,7 @@
       "pageSourceFile": "src/main/ets/pages/MemoEditView.ets"
     },
     {
-      "name": "EditCategory",
+      "name": "CategoryEdit",
       "buildFunction": "EditCategoryBuilder",
       "pageSourceFile": "src/main/ets/pages/EditCategory.ets"
     }

@@ -154,7 +154,7 @@ export class CategoryService {
       return;
     }
 
-    if (originalCategoryId === '-1') {
+    if (originalCategoryId !== '-1') {
       let originalCategory = this.getCategoryById(originalCategoryId);
       if (originalCategory) {
         originalCategory.totalCount--;
@@ -169,6 +169,7 @@ export class CategoryService {
         kvStore.put('Category_' + targetCategory.id, JSON.stringify(targetCategory).replace('/__ob_/g', ''));
       }
     }
-    putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveNote');
+
+    putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
   }
 }

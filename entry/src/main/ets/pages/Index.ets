@@ -26,11 +26,18 @@ struct Index {
     // 加载备忘数据
     await this.memoService.loadEffectiveMemo(this.kvStore);
     this.memoList = this.memoService.getMemoList();
+    console.info(`Memo List: ${JSON.stringify(this.memoList)}`);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.memoList);
 
     console.info(`Current Category: ${JSON.stringify(this.currentCategory)}`);
 
+  }
+
+  resetCategory(category: Category) {
+    this.openCategorySheet = false;
+    this.currentCategory = category;
+    this.memoList = this.memoService.getMemoList(this.currentCategory.id);
   }
 
   @Builder
@@ -161,7 +168,20 @@ struct Index {
 
   @Builder
   cardItemEnd(memo: Memo) {
-    Row() {
+    Row({ space: 8 }) {
+      Image($r('app.media.arrow_right_folder_fill'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor(Color.Green)
+        .onClick(() => {
+          const params: Record<string, Object> =
+            { 'isEditCategory': false, 'currentCategory': this.currentCategory, 'memoList': [memo] };
+          this.appPathStack.pushPathByName('CategoryEdit', params);
+        });
+
       Image($r('app.media.trash_fill'))
         .width(40)
         .height(40)
@@ -174,7 +194,6 @@ struct Index {
         });
     }
     .alignItems(VerticalAlign.Center)
-    .justifyContent(FlexAlign.SpaceAround)
     .padding($r('sys.float.padding_level8'));
   }
 
@@ -196,7 +215,7 @@ struct Index {
               }
             });
           },
-          (item: Memo) => item.id,
+          (item: Memo) => JSON.stringify(item),
         );
       }
       .scrollBar(BarState.Off);
@@ -244,10 +263,10 @@ struct Index {
               .padding({ left: 12, right: 12 })
               .backgroundColor($r('sys.color.comp_background_list_card'))
               .onClick(() => {
-                // todo
+                this.resetCategory(category);
               });
             },
-            (category: Category) => category.id,
+            (category: Category) => JSON.stringify(category),
           );
         }
         .borderRadius(8)
@@ -281,7 +300,7 @@ struct Index {
         if (this.currentCategory) {
           const params: Record<string, Object | undefined> =
             { 'isEditCategory': true, 'currentCategory': this.currentCategory };
-          this.appPathStack.pushPathByName('EditCategory', params);
+          this.appPathStack.pushPathByName('CategoryEdit', params);
         }
       });
     }

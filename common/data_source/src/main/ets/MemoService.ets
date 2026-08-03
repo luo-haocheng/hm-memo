@@ -24,6 +24,7 @@ export class MemoService {
     }
     for (let i = 0; i < dataList.length; i++) {
       const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
+      console.info(`Serialize Memo: ${serializedMemo.categoryId}`);
       let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
       const memo = this.constructMemo(mss, serializedMemo);
       await this.addMemo(memo);
@@ -70,8 +71,8 @@ export class MemoService {
     this.memoList.filter(memo => memo.categoryId === categoryId).forEach(memo => {
       memo.categoryId = '-1';
 
-      deleteMemoInKvStore(memo.id, 'EffectiveNote', kvStore);
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveNote');
+      deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
     });
   }
 

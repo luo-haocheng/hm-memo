@@ -13,8 +13,10 @@ export function EditCategoryBuilder() {
 export struct EditCategory {
   private listScroller: ListScroller = new ListScroller();
   private uiContext: UIContext = this.getUIContext() as UIContext;
+  private memoService: MemoService = MemoService.instance;
   private categoryService: CategoryService = CategoryService.instance;
   @Consumer() kvStore: KVStore | undefined = undefined;
+  @Consumer('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local categoryId: string = '';
   @Local isEditCategory: boolean = true;
   @Local isEditCategoryName: boolean = true;
@@ -114,6 +116,19 @@ export struct EditCategory {
                       }
                     }
                   }
+                })
+                .onClick(() => {
+                  if (!this.isEditCategory && this.memoList) {
+                    this.memoList.forEach(memo => {
+                      this.categoryService.moveCategory(memo, item.id, this.kvStore!, this.uiContext);
+                      memo.categoryId = item.id;
+                    });
+                    this.memoList.forEach(memo => {
+                      console.info(`Memo Fuck: ${JSON.stringify(memo)}`);
+                      this.memoService.updateMemo(memo);
+                    });
+                    this.appPathStack.pop();
+                  }
                 });
               },
               (item: Category) => JSON.stringify(item),
@@ -158,6 +173,9 @@ export struct EditCategory {
       let params = ctx.pathInfo.param as Record<string, Object>;
       this.currentCategory = params.currentCategory as Category;
       this.isEditCategory = params.isEditCategory as boolean;
+      if (!this.isEditCategory) {
+        this.memoList = params.memoList as Memo[];
+      }
     });
   }
 }
