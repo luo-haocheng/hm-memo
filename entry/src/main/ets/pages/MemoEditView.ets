@@ -105,7 +105,7 @@ struct MemoEditView {
 
     if (this.isEditMemo) {
       this.currentMemo.updateContent(styledString, this.memoTitle);
-      this.memoService.updateNote(this.currentMemo, this.kvStore, this.uiContext);
+      this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
     } else {
       this.currentMemo.title = this.memoTitle;
       this.currentMemo.styledString = this.editorController.contentController.getStyledString();
@@ -137,14 +137,14 @@ struct MemoEditView {
     .menus(this.toolBar())
     .onReady((ctx: NavDestinationContext) => {
       let params = ctx.pathInfo.param as Record<string, Object>;
-      let noteId = params.noteId as string;
-      if (noteId == '') {
+      let memoId = params.memoId as string;
+      if (memoId == '') {
         this.isEditMemo = false;
       } else {
         this.isEditMemo = true;
-        const note = this.memoService.getNoteById(noteId);
-        if (note) {
-          this.currentMemo = note;
+        const memo = this.memoService.getMemoById(memoId);
+        if (memo) {
+          this.currentMemo = memo;
         }
       }
     });

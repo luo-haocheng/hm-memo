@@ -20,8 +20,8 @@ struct Index {
     this.kvStore = new KVStore();
     this.kvStore.kvStore = await this.kvStore.createKVStore(false, this.securityLevel, this.uiContext);
     // 读取笔记
-    await this.memoService.loadEffectiveNote(this.kvStore);
-    this.memoList = this.memoService.getNoteList();
+    await this.memoService.loadEffectiveMemo(this.kvStore);
+    this.memoList = this.memoService.getMemoList();
     console.info(`Memo List: ${JSON.stringify(this.memoList)}`);
   }
 
@@ -70,7 +70,7 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .position({ right: 32, bottom: 40 })
     .onClick(() => {
-      const params: Record<string, Object> = { 'noteId': '' };
+      const params: Record<string, Object> = { 'memoId': '' };
       this.appPathStack.pushPathByName('MemoEdit', params);
     });
   }
@@ -105,9 +105,28 @@ struct Index {
       .backgroundColor($r('sys.color.comp_background_list_card'));
     }
     .onClick(() => {
-      const params: Record<string, Object> = { 'noteId': item.id };
+      const params: Record<string, Object> = { 'memoId': item.id };
       this.appPathStack.pushPathByName('MemoEdit', params);
     });
+  }
+
+  @Builder
+  cardItemEnd(memo: Memo) {
+    Row() {
+      Image($r('app.media.trash_fill'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor(Color.Red)
+        .onClick(() => {
+          this.memoService.deleteMemo(memo.id, this.kvStore);
+        });
+    }
+    .alignItems(VerticalAlign.Center)
+    .justifyContent(FlexAlign.SpaceAround)
+    .padding($r('sys.float.padding_level8'));
   }
 
   @Builder
@@ -119,7 +138,14 @@ struct Index {
           (item: Memo) => {
             ListItem() {
               this.cardItem(item, 1);
-            };
+            }
+            .swipeAction({
+              end: {
+                builder: () => {
+                  this.cardItemEnd(item);
+                }
+              }
+            });
           },
           (item: Memo) => item.id,
         );
