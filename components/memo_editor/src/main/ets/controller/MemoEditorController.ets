@@ -78,7 +78,6 @@ export class MemoEditorController {
   addHistoryRecord(styledString: MutableStyledString) {
     this.historyRecords = this.historyRecords.slice(0, ++this.currRecordIdx);
     this.historyRecords.push(new ChangeRecord(styledString));
-    console.info(`Current Record Index: ${this.currRecordIdx}, ${this.historyRecords.length}`);
   }
 
   /**

@@ -95,7 +95,12 @@ export class SerializeUtil {
     let mss = new MutableStyledString(obj.content, styleOptions);
     // 添加图片
     for (let imageOption of imageOptions) {
-      mss.insertStyledString(imageOption.start, new MutableStyledString(imageOption.styledValue as ImageAttachment));
+      try {
+        mss.replaceStyledString(imageOption.start, imageOption.length,
+          new MutableStyledString(imageOption.styledValue as ImageAttachment));
+      } catch (error) {
+        console.error(`Failed invoko replaceStyledString when deserialize image`);
+      }
     }
     return mss;
   }
