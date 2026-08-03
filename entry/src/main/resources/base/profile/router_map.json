@@ -2,8 +2,13 @@
   "routerMap": [
     {
       "name": "MemoEdit",
-      "buildFunction":  "MemoEditBuilder",
+      "buildFunction": "MemoEditBuilder",
       "pageSourceFile": "src/main/ets/pages/MemoEditView.ets"
+    },
+    {
+      "name": "EditCategory",
+      "buildFunction": "EditCategoryBuilder",
+      "pageSourceFile": "src/main/ets/pages/EditCategory.ets"
     }
   ]
 }

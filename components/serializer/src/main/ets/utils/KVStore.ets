@@ -95,7 +95,6 @@ export class KVStore {
       .catch((error: BusinessError) => {
         console.error(`Failed to getEntries. Code:${error.code},message:${error.message}`);
       });
-    console.info(`kvStoreType: ${JSON.stringify(allKVStore)}`);
 
     return allKVStore;
   }

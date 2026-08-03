@@ -1,9 +1,12 @@
 import { Memo } from 'memo_editor';
 import { KVStore, SerializeUtil } from 'serializer';
+import { CategoryService } from './CategoryService';
+import { SortEnum } from './Model';
 
 @ObservedV2
 export class MemoService {
   private static _instance: MemoService;
+  private categoryService: CategoryService = CategoryService.instance;
 
   public static get instance() {
     if (!MemoService._instance) {
@@ -35,6 +38,14 @@ export class MemoService {
   public async addMemo(memo: Memo, kvStore?: KVStore, uiContext?: UIContext) {
     this.memoList.unshift(memo);
 
+    const category = this.categoryService.getCategoryList().find((item) => item.id === memo.categoryId);
+    if (category) {
+      category.totalCount++;
+      if (category.id === '-1') {
+        this.categoryService.getCategoryList()[0].totalCount++;
+      }
+    }
+
     if (kvStore && uiContext) {
       await putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
     }
@@ -53,14 +64,34 @@ export class MemoService {
   }
 
   /**
-   * 删除笔记到回收站
+   * 移动笔记分类
    */
-  public deleteMemo(id: string | undefined, kvStore?: KVStore) {
+  public moveMemoCategory(categoryId: string, kvStore: KVStore, uiContext: UIContext) {
+    this.memoList.filter(memo => memo.categoryId === categoryId).forEach(memo => {
+      memo.categoryId = '-1';
+
+      deleteMemoInKvStore(memo.id, 'EffectiveNote', kvStore);
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveNote');
+    });
+  }
+
+  /**
+   * 删除笔记
+   */
+  public deleteMemo(id: string | undefined, categoryId?: string, kvStore?: KVStore) {
     if (!id) {
       return;
     }
     const index = this.memoList.findIndex((item) => item.id === id);
     this.memoList.splice(index, 1);
+
+    this.categoryService.getCategoryList()[0].totalCount--;
+    if (categoryId && categoryId !== '-1') {
+      const category = this.categoryService.getCategoryById(categoryId);
+      if (category) {
+        category.totalCount--;
+      }
+    }
 
     if (kvStore) {
       deleteMemoInKvStore(id, 'EffectiveMemo', kvStore);
@@ -78,11 +109,34 @@ export class MemoService {
   }
 
   /**
+   *
+   */
+  public search(keyword: string): Memo[] {
+    if (!keyword) {
+      return this.memoList;
+    }
+
+    const lowerKeyword = keyword.toLowerCase();
+    return this.memoList.filter((item) => {
+      return item.title.toLowerCase().includes(lowerKeyword) || item.description.toLowerCase().includes(lowerKeyword);
+    });
+  }
+
+  /**
    * 查询笔记列表
    */
-  public getMemoList() {
-    this.memoList.sort((a, b) => parseInt(b.createTime) - parseInt(a.createTime));
-    return this.memoList;
+  public getMemoList(id?: string, sortType?: SortEnum, keyWord: string = '') {
+    let memoList: Memo[] = this.search(keyWord);
+    if (id !== undefined && id !== '-1') {
+      memoList = memoList.filter((item) => item.categoryId === id);
+    }
+    if (sortType === SortEnum.CREATE_TIME) {
+      memoList = memoList.sort((a, b) => parseInt(b.createTime) - parseInt(a.createTime));
+    } else {
+      memoList = memoList.sort((a, b) => parseInt(b.updateTime) - parseInt(a.updateTime));
+    }
+
+    return memoList;
   }
 
   private constructMemo(value: MutableStyledString, serializedMemo: Memo) {
