@@ -1,9 +1,10 @@
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
-import { Category, CategoryService, MemoService } from 'data_source';
+import { Category, CategoryService, MemoService, SortEnum } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
 import { DateUtil } from 'utils';
 import { DateConstants } from 'utils/src/main/ets/constants/DateConstants';
+import { ShowMethod, ShowMethodEnum, showType, sortData, SortType } from '../constants/HomeUIConstant';
 
 
 @Entry
@@ -16,7 +17,10 @@ struct Index {
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local memoList: Array<Memo> = [];
+  @Local openSortSheet: boolean = false;
   @Local openCategorySheet: boolean = false;
+  @Local sortBy: SortEnum = SortEnum.CREATE_TIME;
+  @Local showListType: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local currentCategory: Category = this.categoryService.getFirstCategory();
 
   async aboutToAppear() {
@@ -35,10 +39,27 @@ struct Index {
   }
 
   resetCategory(category: Category) {
-    this.openCategorySheet = false;
     this.currentCategory = category;
     this.memoList = this.memoService.getMemoList(this.currentCategory.id);
+    this.openCategorySheet = false;
   }
+
+  // 排序确认方法
+  onSortConfirm(categoryId: string, sortBy: SortEnum, searchKeyword: string) {
+    this.sortBy = sortBy;
+    this.memoService.getMemoList(categoryId, this.sortBy, searchKeyword);
+    this.openSortSheet = false;
+  }
+
+  // 列表排序
+  sort = (type: SortEnum) => {
+    this.onSortConfirm(this.currentCategory.id, type, '');
+  };
+  // 列表展开方式
+  toggleShowType = (userWaterFlow: ShowMethodEnum) => {
+    this.showListType = userWaterFlow;
+    this.openSortSheet = false;
+  };
 
   @Builder
   headerArea() {
@@ -100,7 +121,20 @@ struct Index {
 
       Image($r('app.media.icon_more'))
         .width(20)
-        .height(20);
+        .height(20)
+        .onClick(() => {
+          this.openSortSheet = true;
+        })
+        .bindSheet(
+          $$this.openSortSheet,
+          this.sortSheet(),
+          {
+            height: 376,
+            width: '100%',
+            showClose: false,
+            radius: { topLeft: 16, topRight: 16 },
+          }
+        );
     }
     .width('100%')
     .padding({
@@ -237,6 +271,46 @@ struct Index {
   }
 
   @Builder
+  waterCardList() {
+    Column() {
+      WaterFlow() {
+        ForEach(
+          this.memoList,
+          (item: Memo) => {
+            FlowItem() {
+              this.cardItem(item, 9);
+            }
+            .width('100%');
+          },
+          (item: Memo) => JSON.stringify(item),
+        );
+      }
+      .width('100%')
+      .height('100%')
+      .rowsGap(16)
+      .cachedCount(1)
+      .columnsTemplate('1fr 1fr')
+      .columnsGap($r('sys.float.padding_level8'));
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .margin({ bottom: 10 })
+    .padding({
+      left: $r('sys.float.padding_level8'),
+      right: $r('sys.float.padding_level8'),
+    });
+  }
+
+  @Builder
+  showMemoList() {
+    if (this.showListType === ShowMethodEnum.LIST) {
+      this.cardList();
+    } else {
+      this.waterCardList();
+    }
+  }
+
+  @Builder
   showCategoryDialog() {
     Column() {
       Column() {
@@ -319,6 +393,68 @@ struct Index {
     .backgroundColor($r('sys.color.background_secondary'));
   }
 
+  @Builder
+  sheetCard(title: string, data: SortType[] | ShowMethod[], callback: Function, group: string) {
+    Column() {
+      Text(title)
+        .width('100%')
+        .margin({ bottom: 16 })
+        .fontSize(20)
+        .textAlign(TextAlign.Start)
+        .fontWeight(FontWeight.Medium);
+
+      List({ space: 24 }) {
+        ForEach(
+          data,
+          (item: SortType | ShowMethod) => {
+            ListItem() {
+              Row() {
+                Text(item.name)
+                  .fontSize(16)
+                  .fontColor($r('sys.color.font_primary'));
+
+                Blank();
+
+                Radio({ value: item.type, group: group })
+                  .checked(this.sortBy === item.type || this.showListType === item.type)
+                  .onChange((isChecked: boolean) => {
+                    if (isChecked) {
+                      callback(item.type);
+                    }
+                  });
+              }
+              .width('100%')
+              .padding({ left: 12, right: 12 })
+              .onClick(() => {
+                callback(item.type);
+              });
+            };
+          },
+          (item: SortType | ShowMethod) => JSON.stringify(item),
+        );
+      }
+      .borderRadius(8)
+      .padding({ top: 16, bottom: 16 })
+      .backgroundColor($r('sys.color.comp_background_list_card'))
+      .divider({ strokeWidth: 1, startMargin: 12, endMargin: 12 });
+    }
+    .width('100%')
+    .backgroundColor($r('sys.color.background_secondary'))
+    .padding({
+      top: 20,
+      left: $r('sys.float.padding_level8'),
+      right: $r('sys.float.padding_level8'),
+    });
+  }
+
+  @Builder
+  sortSheet() {
+    Column() {
+      this.sheetCard('展示形式', showType, this.toggleShowType, 'showType');
+      this.sheetCard('排序方式', sortData, this.sort, 'sortGroup');
+    };
+  }
+
   build() {
     Navigation(this.appPathStack) {
       Column() {
@@ -329,7 +465,7 @@ struct Index {
         // 工具栏
         this.editorMemoList();
         // 备忘列表
-        this.cardList();
+        this.showMemoList();
         // 新增备忘按钮
         this.addMemoBuilder();
       }
