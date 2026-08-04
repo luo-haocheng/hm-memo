@@ -2,6 +2,7 @@ import { Memo } from 'memo_editor';
 import { KVStore, SerializeUtil } from 'serializer';
 import { CategoryService } from './CategoryService';
 import { SortEnum } from './Model';
+import { UIContext } from '@kit.ArkUI';
 
 @ObservedV2
 export class MemoService {
@@ -16,21 +17,41 @@ export class MemoService {
   }
 
   @Trace private memoList: Memo[] = [];
+  @Trace private dumpsters: Memo[] = [];
 
+  /**
+   * 读取有效备忘
+   */
   public async loadEffectiveMemo(kvStore: KVStore) {
     const dataList = await kvStore.getAll('EffectiveMemo');
-    if (!dataList) {
-      return;
+    if (dataList) {
+      for (let i = 0; i < dataList.length; i++) {
+        const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
+        let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
+        const memo = this.constructMemo(mss, serializedMemo);
+        await this.addMemo(memo);
+        console.info(`Load effective memo ${memo.id} success.`);
+      }
+      console.info(`Load effective memo data success.`);
     }
-    for (let i = 0; i < dataList.length; i++) {
-      const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
-      console.info(`Serialize Memo: ${serializedMemo.categoryId}`);
-      let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
-      const memo = this.constructMemo(mss, serializedMemo);
-      await this.addMemo(memo);
-      console.info(`Load memo ${memo.id} success.`);
+  }
+
+  /**
+   * 读取回收站备忘
+   */
+  public async loadDeleteMemo(kvStore: KVStore) {
+    const dataList = await kvStore.getAll('DeleteMemo');
+    if (dataList) {
+      for (let i = 0; i < dataList.length; i++) {
+        const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
+        let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
+        const memo = this.constructMemo(mss, serializedMemo);
+        this.dumpsters.push(memo);
+
+        console.info(`Load delete memo ${memo.id} success.`);
+      }
+      console.info(`Load delete memo data success.`);
     }
-    console.info(`Load memo data success.`);
   }
 
   /**
@@ -65,27 +86,58 @@ export class MemoService {
   }
 
   /**
+   * 从回收站恢复
+   */
+  public recoverMemo(id: string, kvStore?: KVStore, uiContext?: UIContext) {
+    const index = this.dumpsters.findIndex((item) => item.id === id);
+    if (index === -1) {
+      return;
+    }
+    // 从删除备忘列表移动到有效备忘列表
+    const memo = this.dumpsters[index];
+    this.dumpsters.splice(index, 1);
+    this.memoList.push(memo);
+    // 更新分类计数
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (category) {
+      category.totalCount++;
+      if (category.id !== '-1') {
+        this.categoryService.getCategoryList()[0].totalCount++;
+      }
+    }
+    // 持久化
+    if (kvStore && uiContext) {
+      deleteMemoInKvStore(id, 'DeleteMemo', kvStore);
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+    }
+  }
+
+  /**
    * 移动笔记分类
    */
   public moveMemoCategory(categoryId: string, kvStore: KVStore, uiContext: UIContext) {
-    this.memoList.filter(memo => memo.categoryId === categoryId).forEach(memo => {
-      memo.categoryId = '-1';
-
-      deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
-    });
+    this.memoList
+      .filter(memo => memo.categoryId === categoryId)
+      .forEach(memo => {
+        memo.categoryId = '-1';
+        deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
+        putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      });
   }
 
   /**
    * 删除笔记
    */
-  public deleteMemo(id: string | undefined, categoryId?: string, kvStore?: KVStore) {
-    if (!id) {
+  public deleteMemoToTrash(id: string, categoryId?: string, kvStore?: KVStore, uiContext?: UIContext) {
+    // 从有效备忘列表中取出，插入删除备忘列表中
+    const index = this.memoList.findIndex((item) => item.id === id);
+    if (index === -1) {
       return;
     }
-    const index = this.memoList.findIndex((item) => item.id === id);
+    const delMemo = this.memoList[index];
     this.memoList.splice(index, 1);
-
+    this.dumpsters.push(delMemo);
+    // 相应分类数量减一
     this.categoryService.getCategoryList()[0].totalCount--;
     if (categoryId && categoryId !== '-1') {
       const category = this.categoryService.getCategoryById(categoryId);
@@ -93,9 +145,24 @@ export class MemoService {
         category.totalCount--;
       }
     }
-
-    if (kvStore) {
+    // 从有效备忘持久化中删除，持久化到删除备忘
+    if (kvStore && uiContext) {
       deleteMemoInKvStore(id, 'EffectiveMemo', kvStore);
+      putMemoInKvStore(delMemo, uiContext, kvStore, 'DeleteMemo');
+    }
+  }
+
+  /**
+   * 从回收站彻底删除备忘
+   */
+  public deletePermanently(id: string, kvStore?: KVStore) {
+    const index = this.dumpsters.findIndex((item) => item.id === id);
+    if (index === -1) {
+      return;
+    }
+    this.dumpsters.splice(index, 1);
+    if (kvStore) {
+      deleteMemoInKvStore(id, 'DeleteMemo', kvStore);
     }
   }
 
@@ -138,6 +205,13 @@ export class MemoService {
     }
 
     return memoList;
+  }
+
+  /**
+   * 查询回收站数据
+   */
+  public getDeletedMemoList(): Memo[] {
+    return this.dumpsters;
   }
 
   private constructMemo(value: MutableStyledString, serializedMemo: Memo) {

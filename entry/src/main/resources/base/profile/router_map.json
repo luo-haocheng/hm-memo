@@ -9,6 +9,16 @@
       "name": "CategoryEdit",
       "buildFunction": "EditCategoryBuilder",
       "pageSourceFile": "src/main/ets/pages/EditCategory.ets"
+    },
+    {
+      "name": "MineView",
+      "buildFunction": "MineViewBuilder",
+      "pageSourceFile": "src/main/ets/pages/mine/MineView.ets"
+    },
+    {
+      "name": "Trash",
+      "buildFunction": "TrashBuilder",
+      "pageSourceFile": "src/main/ets/pages/mine/Trash.ets"
     }
   ]
 }

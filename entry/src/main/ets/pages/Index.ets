@@ -29,8 +29,9 @@ struct Index {
     this.kvStore.kvStore = await this.kvStore.createKVStore(false, this.securityLevel, this.uiContext);
     // 加载备忘数据
     await this.memoService.loadEffectiveMemo(this.kvStore);
+    await this.memoService.loadDeleteMemo(this.kvStore);
+    // 填充备忘列表
     this.memoList = this.memoService.getMemoList();
-    console.info(`Memo List: ${JSON.stringify(this.memoList)}`);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.memoList);
 
@@ -68,10 +69,15 @@ struct Index {
         .fontSize(24)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('sys.color.font_primary'));
+
       Blank();
+
       Image($r('app.media.user_avatar'))
         .width(40)
-        .height(40);
+        .height(40)
+        .onClick(() => {
+          this.appPathStack.pushPathByName('MineView', undefined);
+        });
     }
     .width('100%')
     .padding({
@@ -231,7 +237,7 @@ struct Index {
         .fillColor(Color.White)
         .backgroundColor(Color.Red)
         .onClick(() => {
-          this.memoService.deleteMemo(memo.id, memo.categoryId, this.kvStore);
+          this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
         });
     }
     .alignItems(VerticalAlign.Center)
