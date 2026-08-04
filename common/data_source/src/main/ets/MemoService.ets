@@ -208,7 +208,22 @@ export class MemoService {
   }
 
   /**
-   * 查询回收站数据
+   * 在回收站中搜索笔记
+   */
+  public searchInDumpsters(keyword: string): Memo[] | undefined {
+    if (!keyword) {
+      return this.dumpsters;
+    }
+    const lowerKeyword = keyword.toLowerCase();
+
+    return this.dumpsters.filter((item) => {
+      return item.title.toLowerCase().includes(lowerKeyword) ||
+        item.description.toLowerCase().includes(lowerKeyword);
+    });
+  }
+
+  /**
+   * 获得回收站数据
    */
   public getDeletedMemoList(): Memo[] {
     return this.dumpsters;

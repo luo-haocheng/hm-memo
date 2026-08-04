@@ -39,7 +39,7 @@ export struct EditCategory {
     return this.memoList?.find(memo => memo.categoryId === item.id) ? FontWeight.Medium : FontWeight.Regular;
   }
 
-  partOfNoteList(categoryId: string): boolean {
+  partOfMemoList(categoryId: string): boolean {
     if (this.memoList) {
       return this.memoList.find(item => item.categoryId === categoryId) ? true : false;
     }
@@ -106,7 +106,7 @@ export struct EditCategory {
                   .width('100%')
                   .borderRadius(18)
                   .padding({ left: '3%', right: '3%' })
-                  .backgroundColor(!this.isEditCategory && this.partOfNoteList(item.id) ?
+                  .backgroundColor(!this.isEditCategory && this.partOfMemoList(item.id) ?
                     $r('sys.color.background_tertiary') : $r('sys.color.comp_background_list_card'));
                 }
                 .swipeAction({

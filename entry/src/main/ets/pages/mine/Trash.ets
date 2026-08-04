@@ -16,7 +16,22 @@ export struct Trash {
   private scroller: ListScroller = new ListScroller();
   @Consumer('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Consumer() kvStore: KVStore | undefined = undefined;
+  @Local searchKeyword: string = ''; // 搜索关键词
+  @Local isSearching: boolean = false; // 是否正在搜索状态
   @Local memoList: Memo[] = this.memoService.getDeletedMemoList();
+
+  // 回收站搜索
+  onDumpsterSearch(keyword: string): Memo[] {
+    this.searchKeyword = keyword.trim();
+    this.isSearching = this.searchKeyword.length > 0;
+    return this.isSearching
+      ? this.memoService.searchInDumpsters(this.searchKeyword) || []
+      : this.memoService.getDeletedMemoList();
+  }
+
+  onSearch(keyword: string) {
+    this.memoList = this.onDumpsterSearch(keyword);
+  }
 
   @Builder
   swipeEnd(item: Memo) {
@@ -53,7 +68,7 @@ export struct Trash {
   }
 
   @Builder
-  showNoteList() {
+  showMemoList() {
     List({ space: 12, scroller: this.scroller }) {
       ForEach(
         this.memoList,
@@ -100,16 +115,46 @@ export struct Trash {
     };
   }
 
+  @Builder
+  emptyTrash() {
+    Column() {
+      Image($r('app.media.empty_trash'))
+        .width(120)
+        .height(120);
+
+      Text('回收站暂无内容')
+        .fontSize(12)
+        .fontColor($r('sys.color.font_tertiary'));
+    }
+    .height(100)
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 70, left: '4%', right: '4%' });
+  }
+
   build() {
     NavDestination() {
       Column() {
-        Search({ placeholder: '请输入关键词搜索' })
+        Search({ placeholder: '搜索' })
           .width('100%')
           .margin({ bottom: 12 })
           .placeholderColor($r('sys.color.font_secondary'))
-          .placeholderFont({ size: $r('sys.float.Body_L') });
+          .placeholderFont({ size: $r('sys.float.Body_L') })
+          .onSubmit((value: string) => {
+            this.onSearch(value);
+          })
+          .onChange((value: string) => {
+            if (!value) {
+              this.onSearch('');
+            }
+          });
 
-        this.showNoteList();
+        if (this.memoList.length === 0) {
+          this.emptyTrash();
+        } else {
+          this.showMemoList();
+        }
       }
       .width('100%')
       .height('100%')

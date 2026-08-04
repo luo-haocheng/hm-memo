@@ -17,6 +17,8 @@ struct Index {
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local memoList: Array<Memo> = [];
+  @Local searchKeyword: string = '';
+  @Local isSearching: boolean = false;
   @Local openSortSheet: boolean = false;
   @Local openCategorySheet: boolean = false;
   @Local sortBy: SortEnum = SortEnum.CREATE_TIME;
@@ -43,6 +45,13 @@ struct Index {
     this.currentCategory = category;
     this.memoList = this.memoService.getMemoList(this.currentCategory.id);
     this.openCategorySheet = false;
+  }
+
+  // 搜索
+  onSearch(categoryId: string, keyword: string, sortBy: SortEnum): Memo[] {
+    this.searchKeyword = keyword.trim();
+    this.isSearching = this.searchKeyword.length > 0;
+    return this.memoService.getMemoList(categoryId, sortBy, this.searchKeyword);
   }
 
   // 排序确认方法
@@ -94,7 +103,17 @@ struct Index {
       .placeholderFont({ size: $r('sys.float.Body_L') })
       .placeholderColor($r('sys.color.font_secondary'))
       .fontColor($r('sys.color.font_primary'))
-      .margin({ bottom: 12, left: $r('sys.float.padding_level8'), right: $r('sys.float.padding_level8') });
+      .margin({ bottom: 12, left: $r('sys.float.padding_level8'), right: $r('sys.float.padding_level8') })
+      .onSubmit((value: string) => {
+        // 提交搜索
+        this.memoList = this.onSearch(this.currentCategory.id, value, this.sortBy);
+      })
+      .onChange((value: string) => {
+        if (!value) {
+          // 清空搜索时恢复列表
+          this.memoList = this.onSearch(this.currentCategory.id, '', this.sortBy);
+        }
+      });
   }
 
   @Builder
@@ -308,8 +327,51 @@ struct Index {
   }
 
   @Builder
+  emptyMemos() {
+    Column() {
+      Image($r('app.media.empty_memo'))
+        .width(120)
+        .height(120);
+
+      Text('岁月悠悠，心事悄悄，记录一下吧')
+        .fontSize(12)
+        .fontColor($r('sys.color.font_tertiary'));
+    }
+    .height(100)
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({
+      top: 10,
+      left: $r('sys.float.padding_level8'),
+      right: $r('sys.float.padding_level8'),
+    });
+  }
+
+  @Builder
+  searchNoResult() {
+    Column() {
+      Text('没有匹配的备忘')
+        .fontSize(16)
+        .fontColor($r('sys.color.font_tertiary'));
+    }
+    .height(100)
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .padding({
+      left: $r('sys.float.padding_level8'),
+      right: $r('sys.float.padding_level8'),
+    });
+  }
+
+  @Builder
   showMemoList() {
-    if (this.showListType === ShowMethodEnum.LIST) {
+    if (this.isSearching && this.memoList.length === 0) {
+      this.searchNoResult();
+    } else if (!this.isSearching && this.memoList.length === 0) {
+      this.emptyMemos();
+    } else if (this.showListType === ShowMethodEnum.LIST) {
       this.cardList();
     } else {
       this.waterCardList();

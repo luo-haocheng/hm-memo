@@ -15,11 +15,11 @@ function initCategoryList(): Array<Category> {
 /**
  * 持久化 保存备忘
  */
-function putMemoInKvStore(note: Memo, uiContext: UIContext, kvStore: KVStore, prefix: string) {
-  SerializeUtil.serialize(note.styledString, uiContext).then(value => {
-    let key = prefix + '_' + note.id;
-    note.serializedStyledString = value;
-    kvStore.put(key, JSON.stringify(note).replace(/__ob_/g, ''));
+function putMemoInKvStore(memo: Memo, uiContext: UIContext, kvStore: KVStore, prefix: string) {
+  SerializeUtil.serialize(memo.styledString, uiContext).then(value => {
+    let key = prefix + '_' + memo.id;
+    memo.serializedStyledString = value;
+    kvStore.put(key, JSON.stringify(memo).replace(/__ob_/g, ''));
   });
 }
 
