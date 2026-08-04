@@ -178,7 +178,14 @@ struct Index {
         .backgroundColor(Color.Green)
         .onClick(() => {
           const params: Record<string, Object> =
-            { 'isEditCategory': false, 'currentCategory': this.currentCategory, 'memoList': [memo] };
+            {
+              'isEditCategory': false,
+              'currentCategory': this.currentCategory,
+              'memoList': [memo],
+              'resetCategory': () => {
+                this.resetCategory(this.currentCategory);
+              }
+            };
           this.appPathStack.pushPathByName('CategoryEdit', params);
         });
 

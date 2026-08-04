@@ -15,6 +15,7 @@ export struct EditCategory {
   private uiContext: UIContext = this.getUIContext() as UIContext;
   private memoService: MemoService = MemoService.instance;
   private categoryService: CategoryService = CategoryService.instance;
+  private resetCategory: VoidCallback | undefined = undefined;
   @Consumer() kvStore: KVStore | undefined = undefined;
   @Consumer('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local categoryId: string = '';
@@ -124,9 +125,11 @@ export struct EditCategory {
                       memo.categoryId = item.id;
                     });
                     this.memoList.forEach(memo => {
-                      console.info(`Memo Fuck: ${JSON.stringify(memo)}`);
                       this.memoService.updateMemo(memo);
                     });
+                    if (this.resetCategory) {
+                      this.resetCategory();
+                    }
                     this.appPathStack.pop();
                   }
                 });
@@ -175,6 +178,7 @@ export struct EditCategory {
       this.isEditCategory = params.isEditCategory as boolean;
       if (!this.isEditCategory) {
         this.memoList = params.memoList as Memo[];
+        this.resetCategory = params.resetCategory as VoidCallback;
       }
     });
   }
