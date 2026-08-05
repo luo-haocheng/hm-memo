@@ -22,6 +22,15 @@ export default class EntryAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
+    let windowClass: window.Window = windowStage.getMainWindowSync();
+    // 隐藏底部导航栏
+    windowClass.setSpecificSystemBarEnabled('navigationIndicator', false).then(() => {
+      console.info('Succeeded in setting the navigation indicator to be invisible.');
+    }).catch((err: BusinessError) => {
+      console.error(
+        `Failed to set the navigation indicator to be invisible. Code is ${err.code}, message is ${err.message}`);
+    });
+
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));

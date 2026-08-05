@@ -4,7 +4,16 @@ import { Category, CategoryService, MemoService, SortEnum } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
 import { DateUtil } from 'utils';
 import { DateConstants } from 'utils/src/main/ets/constants/DateConstants';
-import { ShowMethod, ShowMethodEnum, showType, sortData, SortType } from '../constants/HomeUIConstant';
+import {
+  ShowMethod,
+  ShowMethodEnum,
+  showType,
+  sortData,
+  SortType,
+  ToolBar,
+  toolBarList,
+  ToolBarName
+} from '../constants/HomeUIConstant';
 
 
 @Entry
@@ -17,6 +26,8 @@ struct Index {
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local memoList: Array<Memo> = [];
+  @Local isMultiChoice: boolean = false;
+  @Local choiceCount: number = 0;
   @Local searchKeyword: string = '';
   @Local isSearching: boolean = false;
   @Local openSortSheet: boolean = false;
@@ -71,21 +82,98 @@ struct Index {
     this.openSortSheet = false;
   };
 
+  recoverInitState() {
+    this.isMultiChoice = false;
+    this.choiceCount = 0;
+  }
+
+  // 备忘长按事件
+  handleLongPress(item: Memo) {
+    if (!this.isMultiChoice) {
+      this.isMultiChoice = true;
+      item.isSelected = true;
+      this.choiceCount = 1;
+    }
+  }
+
+  // 获取选中的笔记
+  getChoiceMemo(): Memo[] {
+    let choiceMemoArr: Memo[] = [];
+    this.memoList.forEach(memo => {
+      if (memo.isSelected) {
+        choiceMemoArr.push(memo);
+      }
+    });
+
+    return choiceMemoArr;
+  }
+
+  // 全选
+  handleChoiceAll() {
+    if (this.choiceCount === this.memoList.length) {
+      this.memoList.forEach(memo => memo.isSelected = false);
+      this.choiceCount = 0;
+    } else {
+      this.memoList.forEach(memo => memo.isSelected = true);
+      this.choiceCount = this.memoList.length;
+    }
+  }
+
+  // 底部工具栏点击事件 分类、删除、全选
+  handleToolBarClick(name: ToolBarName) {
+    if (name === ToolBarName.SELECT_ALL) {
+      this.handleChoiceAll();
+      return;
+    }
+
+    const choiceMemoArr = this.getChoiceMemo();
+    if (choiceMemoArr.length === 0) {
+      this.getUIContext().getPromptAction().showToast({
+        duration: 1500,
+        message: '还未选中任何备忘',
+        alignment: Alignment.Center,
+      });
+      return;
+    }
+
+    if (name === ToolBarName.MOVE_CATEGORY) {
+      const params: Record<string, Object> =
+        {
+          'isEditCategory': false,
+          'memoList': choiceMemoArr,
+          'currentCategory': this.currentCategory,
+          'resetCategory': () => {
+            this.resetCategory(this.currentCategory);
+          }
+        };
+      this.appPathStack.pushPathByName('CategoryEdit', params);
+    } else if (name === ToolBarName.DELETE) {
+      choiceMemoArr.forEach((memo) => {
+        this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+      });
+    }
+  }
+
   @Builder
   headerArea() {
     Row() {
-      Text('首页')
+      Text(this.isMultiChoice ? `已选${this.choiceCount}项` : '首页')
         .fontSize(24)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('sys.color.font_primary'));
 
       Blank();
 
-      Image($r('app.media.user_avatar'))
-        .width(40)
-        .height(40)
+      Image(this.isMultiChoice ? $r('app.media.exit_ctrl') : $r('app.media.user_avatar'))
+        .width(this.isMultiChoice ? 24 : 40)
+        .height(this.isMultiChoice ? 24 : 40)
         .onClick(() => {
-          this.appPathStack.pushPathByName('MineView', undefined);
+          if (this.isMultiChoice) {
+            this.memoList.forEach(item => item.isSelected = false);
+            this.recoverInitState();
+          } else {
+            this.appPathStack.pushPathByName('MineView', undefined);
+          }
         });
     }
     .width('100%')
@@ -118,76 +206,112 @@ struct Index {
 
   @Builder
   editorMemoList() {
-    Row() {
-      Row({ space: 4 }) {
-        Text(this.currentCategory.name)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'));
+    if (!this.isMultiChoice) {
+      Row() {
+        Row({ space: 4 }) {
+          Text(this.currentCategory.name)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'));
 
-        SymbolGlyph($r('sys.symbol.arrowtriangle_down_fill'))
-          .fontColor([$r('sys.color.font_secondary')]);
-      }
-      .onClick(() => {
-        this.openCategorySheet = true;
-      })
-      .bindSheet(
-        $$this.openCategorySheet,
-        this.showCategoryDialog(),
-        {
-          height: 400,
-          width: '100%',
-          title: { title: '笔记分类' },
-          radius: { topLeft: 16, topRight: 16 },
+          SymbolGlyph($r('sys.symbol.arrowtriangle_down_fill'))
+            .fontColor([$r('sys.color.font_secondary')]);
         }
-      );
-
-      Blank();
-
-      Image($r('app.media.icon_more'))
-        .width(20)
-        .height(20)
         .onClick(() => {
-          this.openSortSheet = true;
+          this.openCategorySheet = true;
         })
         .bindSheet(
-          $$this.openSortSheet,
-          this.sortSheet(),
+          $$this.openCategorySheet,
+          this.showCategoryDialog(),
           {
-            height: 376,
+            height: 400,
             width: '100%',
-            showClose: false,
+            title: { title: '笔记分类' },
             radius: { topLeft: 16, topRight: 16 },
           }
         );
+
+        Blank();
+
+        Image($r('app.media.icon_more'))
+          .width(20)
+          .height(20)
+          .onClick(() => {
+            this.openSortSheet = true;
+          })
+          .bindSheet(
+            $$this.openSortSheet,
+            this.sortSheet(),
+            {
+              height: 376,
+              width: '100%',
+              showClose: false,
+              radius: { topLeft: 16, topRight: 16 },
+            }
+          );
+      }
+      .width('100%')
+      .padding({
+        left: $r('sys.float.padding_level8'),
+        right: $r('sys.float.padding_level8'),
+        top: 12,
+        bottom: 12,
+      });
     }
-    .width('100%')
-    .padding({
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-      top: 12,
-      bottom: 12,
-    });
   }
 
   @Builder
   addMemoBuilder() {
-    Row() {
-      SymbolGlyph($r('sys.symbol.plus'))
-        .fontSize(35)
-        .fontColor([Color.White]);
+    if (!this.isMultiChoice) {
+      Row() {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .fontSize(35)
+          .fontColor([Color.White]);
+      }
+      .width(50)
+      .height(50)
+      .zIndex(10)
+      .borderRadius('50%')
+      .backgroundColor('#FFAA00')
+      .justifyContent(FlexAlign.Center)
+      .position({ right: 32, bottom: 40 })
+      .onClick(() => {
+        const params: Record<string, Object> = { 'memoId': '', 'currentCategory': this.currentCategory };
+        this.appPathStack.pushPathByName('MemoEdit', params);
+      });
     }
-    .width(50)
-    .height(50)
-    .zIndex(10)
-    .borderRadius('50%')
-    .backgroundColor('#FFAA00')
-    .justifyContent(FlexAlign.Center)
-    .position({ right: 32, bottom: 40 })
-    .onClick(() => {
-      const params: Record<string, Object> = { 'memoId': '', 'currentCategory': this.currentCategory };
-      this.appPathStack.pushPathByName('MemoEdit', params);
-    });
+  }
+
+  @Builder
+  toolBarBuilder() {
+    if (this.isMultiChoice) {
+      Row() {
+        ForEach(
+          toolBarList,
+          (item: ToolBar) => {
+            Column({ space: 5 }) {
+              Image(item.icon)
+                .width(24)
+                .height(24);
+
+              Text(item.name)
+                .fontSize(10)
+                .fontColor($r('sys.color.font_secondary'));
+            }
+            .onClick(() => {
+              this.handleToolBarClick(item.name);
+            });
+          },
+          (item: ToolBar) => JSON.stringify(item)
+        );
+      }
+      .height(70)
+      .width('100%')
+      .margin({ top: 10 })
+      .padding({ bottom: 10 })
+      .justifyContent(FlexAlign.SpaceAround)
+      .backgroundColor($r('sys.color.comp_background_list_card'));
+    }
   }
 
   @Builder
@@ -218,10 +342,24 @@ struct Index {
       .borderRadius(16)
       .alignItems(HorizontalAlign.Start)
       .backgroundColor($r('sys.color.comp_background_list_card'));
+
+      if (this.isMultiChoice) {
+        Image(item.isSelected ? $r('app.media.selected') : $r('app.media.unselected'))
+          .width(35)
+          .height(35)
+          .padding({ top: 10, right: 10 });
+      }
     }
     .onClick(() => {
-      const params: Record<string, Object> = { 'memoId': item.id, 'currentCategory': this.currentCategory };
-      this.appPathStack.pushPathByName('MemoEdit', params);
+      if (this.isMultiChoice) {
+        item.isSelected = !item.isSelected;
+        let choiceCount = 0;
+        this.memoList.forEach(item => choiceCount += item.isSelected ? 1 : 0);
+        this.choiceCount = choiceCount;
+      } else {
+        const params: Record<string, Object> = { 'memoId': item.id, 'currentCategory': this.currentCategory };
+        this.appPathStack.pushPathByName('MemoEdit', params);
+      }
     });
   }
 
@@ -279,7 +417,13 @@ struct Index {
                   this.cardItemEnd(item);
                 }
               }
-            });
+            })
+            .gesture(
+              LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+                .onAction(() => {
+                  this.handleLongPress(item);
+                })
+            );
           },
           (item: Memo) => JSON.stringify(item),
         );
@@ -534,6 +678,8 @@ struct Index {
         this.editorMemoList();
         // 备忘列表
         this.showMemoList();
+        // 多选底部工具栏
+        this.toolBarBuilder();
         // 新增备忘按钮
         this.addMemoBuilder();
       }
