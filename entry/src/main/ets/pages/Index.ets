@@ -14,6 +14,7 @@ import {
   toolBarList,
   ToolBarName
 } from '../constants/HomeUIConstant';
+import { ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2 } from '@kit.ArkUI';
 
 
 @Entry
@@ -23,10 +24,13 @@ struct Index {
   uiContext: UIContext = this.getUIContext() as UIContext;
   categoryService: CategoryService = CategoryService.instance;
   securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
+  segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '代办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local memoList: Array<Memo> = [];
+  @Local isShowSideBar: boolean = false;
   @Local isMultiChoice: boolean = false;
+  @Local segBtnIndex: number = 0;
   @Local choiceCount: number = 0;
   @Local searchKeyword: string = '';
   @Local isSearching: boolean = false;
@@ -157,26 +161,50 @@ struct Index {
   @Builder
   headerArea() {
     Row() {
-      Text(this.isMultiChoice ? `已选${this.choiceCount}项` : '首页')
-        .fontSize(24)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('sys.color.font_primary'));
-
-      Blank();
-
-      Image(this.isMultiChoice ? $r('app.media.exit_ctrl') : $r('app.media.user_avatar'))
-        .width(this.isMultiChoice ? 24 : 40)
-        .height(this.isMultiChoice ? 24 : 40)
+      Image($r('app.media.xmark'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .opacity(this.isMultiChoice ? 1 : 0)
+        .backgroundColor('rgba(0, 0, 0, 0.05)')
+        .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
-          if (this.isMultiChoice) {
-            this.memoList.forEach(item => item.isSelected = false);
-            this.recoverInitState();
-          } else {
-            this.appPathStack.pushPathByName('MineView', undefined);
-          }
+          this.memoList.forEach(item => item.isSelected = false);
+          this.recoverInitState();
+        });
+
+      if (this.isMultiChoice) {
+        Text(`已选${this.choiceCount}项`)
+          .fontSize(24)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'));
+      } else {
+        TabSegmentButtonV2({
+          items: this.segBtnItems,
+          enableStateAnimation: true,
+          selectedIndex: this.segBtnIndex!!,
+          itemFontSize: LengthMetrics.vp(12),
+          itemSelectedFontSize: LengthMetrics.vp(12),
+          itemSelectedFontColor: ColorMetrics.resourceColor($r('sys.color.font_emphasize')),
+        })
+          .width(120);
+      }
+
+      Image($r('app.media.more_option'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .opacity(this.isMultiChoice ? 0 : 1)
+        .backgroundColor('rgba(0, 0, 0, 0.05)')
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          this.appPathStack.pushPathByName('MineView', undefined);
         });
     }
     .width('100%')
+    .justifyContent(FlexAlign.SpaceBetween)
     .padding({
       top: 12,
       bottom: 20,
@@ -272,9 +300,9 @@ struct Index {
       .height(50)
       .zIndex(10)
       .borderRadius('50%')
-      .backgroundColor('#FFAA00')
       .justifyContent(FlexAlign.Center)
       .position({ right: 32, bottom: 40 })
+      .backgroundColor($r('sys.color.font_emphasize'))
       .onClick(() => {
         const params: Record<string, Object> = { 'memoId': '', 'currentCategory': this.currentCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
@@ -669,26 +697,82 @@ struct Index {
 
   build() {
     Navigation(this.appPathStack) {
-      Column() {
-        // 顶部栏
-        this.headerArea();
-        // 搜索栏
-        this.searchBar();
-        // 工具栏
-        this.editorMemoList();
-        // 备忘列表
-        this.showMemoList();
-        // 多选底部工具栏
-        this.toolBarBuilder();
-        // 新增备忘按钮
-        this.addMemoBuilder();
+      SideBarContainer(SideBarContainerType.Overlay) {
+        Column() {
+          Column() {
+            Text('SideBar')
+              .fontSize(24)
+              .fontColor($r('sys.color.font_primary'));
+          }
+          .width('100%')
+          .height('100%')
+          .margin({ top: 100 })
+          .justifyContent(FlexAlign.Start)
+          .alignItems(HorizontalAlign.Center);
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('sys.color.background_secondary'));
+
+        Stack() {
+          Column() {
+            // 顶部栏
+            this.headerArea();
+            // 搜索栏
+            this.searchBar();
+            // 工具栏
+            this.editorMemoList();
+            // 备忘列表
+            this.showMemoList();
+            // 多选底部工具栏
+            this.toolBarBuilder();
+            // 新增备忘按钮
+            this.addMemoBuilder();
+          }
+          .width('100%')
+          .height('100%')
+          .padding({ top: (AppStorage.get('TopRectHeight') as number) });
+
+          if (this.isShowSideBar) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor($r('sys.color.ohos_id_color_mask_thin'))
+              .onClick(() => {
+                this.getUIContext().animateTo(
+                  {
+                    duration: 300,
+                    curve: Curve.EaseOut,
+                    playMode: PlayMode.Normal,
+                  },
+                  () => {
+                    this.isShowSideBar = false;
+                  });
+              });
+          }
+        }
+        .width('100%')
+        .height('100%');
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('sys.color.background_secondary'))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM, SafeAreaEdge.TOP]);
+      .sideBarWidth('80%')
+      .showSideBar($$this.isShowSideBar)
+      .showControlButton(!this.isMultiChoice)
+      .controlButton({
+        top: 12 + (AppStorage.get('TopRectHeight') as number),
+        left: 12,
+        width: 40,
+        height: 40,
+        icons: {
+          shown: $r('app.media.close_sidebar'),
+          hidden: $r('app.media.open_sidebar'),
+          switching: $r('app.media.open_sidebar'),
+        }
+      });
     }
     .hideTitleBar(true)
-    .mode(NavigationMode.Stack);
+    .mode(NavigationMode.Stack)
+    .backgroundColor($r('sys.color.background_secondary'));
   }
 }

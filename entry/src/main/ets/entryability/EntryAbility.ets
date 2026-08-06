@@ -18,20 +18,34 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
   }
 
+  initWindow(windowStage: window.WindowStage) {
+    try {
+      const windowClass: window.Window = windowStage.getMainWindowSync();
+      windowClass.setWindowLayoutFullScreen(true)
+        .catch((error: BusinessError) => {
+          console.error(`Failed to set window layout full screen. Cause: ${JSON.stringify(error)}`);
+        });
+
+      const topAvoidArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      AppStorage.setOrCreate('TopRectHeight', windowClass.getUIContext().px2vp(topAvoidArea.topRect.height));
+
+      windowClass.on('avoidAreaChange', (data) => {
+        if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+          AppStorage.setOrCreate('TopRectHeight', windowClass.getUIContext().px2vp(data.area.topRect.height));
+        }
+      });
+    } catch (error) {
+      console.error(`Failed to init window. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
-    let windowClass: window.Window = windowStage.getMainWindowSync();
-    // 隐藏底部导航栏
-    windowClass.setSpecificSystemBarEnabled('navigationIndicator', false).then(() => {
-      console.info('Succeeded in setting the navigation indicator to be invisible.');
-    }).catch((err: BusinessError) => {
-      console.error(
-        `Failed to set the navigation indicator to be invisible. Code is ${err.code}, message is ${err.message}`);
-    });
 
     windowStage.loadContent('pages/Index', (err) => {
+      this.initWindow(windowStage);
       if (err.code) {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
