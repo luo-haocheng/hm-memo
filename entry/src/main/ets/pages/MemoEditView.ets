@@ -135,6 +135,7 @@ struct MemoEditView {
       .height('100%');
     }
     .menus(this.toolBar())
+    .padding({ top: AppStorage.get('TopRectHeight') as number })
     .onReady((ctx: NavDestinationContext) => {
       let params = ctx.pathInfo.param as Record<string, Object>;
       let memoId = params.memoId as string;

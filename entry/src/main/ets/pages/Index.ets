@@ -39,6 +39,7 @@ struct Index {
   @Local sortBy: SortEnum = SortEnum.CREATE_TIME;
   @Local showListType: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local currentCategory: Category = this.categoryService.getFirstCategory();
+  @Local sections: WaterFlowSections = new WaterFlowSections();
 
   async aboutToAppear() {
     // 创建KV数据库
@@ -52,8 +53,9 @@ struct Index {
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.memoList);
 
-    console.info(`Current Category: ${JSON.stringify(this.currentCategory)}`);
-
+    // 设置瀑布流分组信息
+    this.sections.push({ itemsCount: 1, crossCount: 1 });
+    this.sections.push({ itemsCount: this.memoList.length, crossCount: 2 });
   }
 
   resetCategory(category: Category) {
@@ -169,61 +171,81 @@ struct Index {
 
   @Builder
   headerArea() {
-    Row() {
-      Image($r('app.media.xmark'))
-        .headerButtonStyle()
-        .fillColor($r('sys.color.font_primary'))
-        .visibility(this.isMultiChoice ? Visibility.Visible : Visibility.Hidden)
-        .onClick(() => {
-          this.memoList.forEach(item => item.isSelected = false);
-          this.recoverInitState();
-        });
+    Column({ space: 16 }) {
+      Row() {
+        Image($r('app.media.xmark'))
+          .headerButtonStyle()
+          .fillColor($r('sys.color.font_primary'))
+          .visibility(this.isMultiChoice ? Visibility.Visible : Visibility.Hidden)
+          .onClick(() => {
+            this.memoList.forEach(item => item.isSelected = false);
+            this.recoverInitState();
+          });
 
-      if (this.isMultiChoice) {
-        Text(`已选择${this.choiceCount}项`)
-          .fontSize(20)
+        if (this.isMultiChoice) {
+          Text(`已选择${this.choiceCount}项`)
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'));
+        } else {
+          TabSegmentButtonV2({
+            items: this.segBtnItems,
+            selectedIndex: this.segBtnIndex!!,
+            enableStateAnimation: true,
+            itemFontSize: LengthMetrics.vp(12),
+            itemSelectedFontSize: LengthMetrics.vp(12),
+            itemSelectedFontColor: ColorMetrics.numeric(0xEBAC24),
+            buttonMinHeight: LengthMetrics.vp(36),
+            buttonBackgroundColor: ColorMetrics.resourceColor($r('sys.color.comp_background_list_card')),
+          })
+            .width(120)
+            .height(36);
+        }
+
+        Image($r('app.media.more_option'))
+          .headerButtonStyle()
+          .fillColor($r('sys.color.font_primary'))
+          .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
+          .onClick(() => {
+            this.appPathStack.pushPathByName('MineView', undefined);
+          });
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Column({ space: 5 }) {
+        Text('全部备忘')
+          .fontSize(30)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.font_primary'));
-      } else {
-        TabSegmentButtonV2({
-          items: this.segBtnItems,
-          selectedIndex: this.segBtnIndex!!,
-          enableStateAnimation: true,
-          itemFontSize: LengthMetrics.vp(12),
-          itemSelectedFontSize: LengthMetrics.vp(12),
-          itemSelectedFontColor: ColorMetrics.numeric(0xEBAC24),
-          buttonMinHeight: LengthMetrics.vp(36),
-          buttonBackgroundColor: ColorMetrics.resourceColor($r('sys.color.comp_background_list_card')),
-        })
-          .width(120)
-          .height(36);
-      }
 
-      Image($r('app.media.more_option'))
-        .headerButtonStyle()
-        .fillColor($r('sys.color.font_primary'))
-        .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
-        .onClick(() => {
-          this.appPathStack.pushPathByName('MineView', undefined);
-        });
+        Text(`${this.memoList.length} 条备忘`)
+          .fontSize(14)
+          .fontWeight(FontWeight.Regular)
+          .fontColor($r('sys.color.font_secondary'));
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start);
     }
     .width('100%')
-    .justifyContent(FlexAlign.SpaceBetween)
+    .justifyContent(FlexAlign.Start)
     .padding({
       top: 12,
-      bottom: 20,
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
+      left: 16,
+      right: 16,
+      bottom: 12
     });
   }
 
   @Builder
   searchBar() {
     Search({ placeholder: '搜索' })
-      .placeholderFont({ size: $r('sys.float.Body_L') })
-      .placeholderColor($r('sys.color.font_secondary'))
+      .margin({ bottom: 0 })
       .fontColor($r('sys.color.font_primary'))
-      .margin({ bottom: 12, left: $r('sys.float.padding_level8'), right: $r('sys.float.padding_level8') })
+      .textFont({ size: $r('sys.float.Body_M') })
+      .placeholderColor($r('sys.color.font_secondary'))
+      .placeholderFont({ size: $r('sys.float.Body_M') })
+      .backgroundColor($r('sys.color.comp_background_list_card'))
       .onSubmit((value: string) => {
         // 提交搜索
         this.memoList = this.onSearch(this.currentCategory.id, value, this.sortBy);
@@ -437,6 +459,10 @@ struct Index {
   cardList() {
     Column() {
       List({ space: 12 }) {
+        ListItem() {
+          this.searchBar();
+        };
+
         ForEach(
           this.memoList,
           (item: Memo) => {
@@ -474,7 +500,11 @@ struct Index {
   @Builder
   waterCardList() {
     Column() {
-      WaterFlow() {
+      WaterFlow({ sections: this.sections }) {
+        FlowItem() {
+          this.searchBar();
+        };
+
         ForEach(
           this.memoList,
           (item: Memo) => {
@@ -505,6 +535,8 @@ struct Index {
   @Builder
   emptyMemos() {
     Column() {
+      this.searchBar();
+
       Image($r('app.media.empty_memo'))
         .width(120)
         .height(120);
@@ -527,6 +559,8 @@ struct Index {
   @Builder
   searchNoResult() {
     Column() {
+      this.searchBar();
+
       Text('没有匹配的备忘')
         .fontSize(16)
         .fontColor($r('sys.color.font_tertiary'));
@@ -723,14 +757,16 @@ struct Index {
             Column() {
               // 顶部栏
               this.headerArea();
-              // 搜索栏
-              this.searchBar();
+
               // 工具栏
-              this.editorMemoList();
+              // this.editorMemoList();
+
               // 备忘列表
               this.showMemoList();
+
               // 多选底部工具栏
               this.toolBarBuilder();
+
               // 新增备忘按钮
               this.addMemoBuilder();
             }
@@ -766,26 +802,28 @@ struct Index {
         .showSideBar($$this.isShowSideBar);
 
 
-        Column() {
-          Image(this.isShowSideBar ? $r('app.media.open_sidebar') : $r('app.media.close_sidebar'))
-            .headerButtonStyle()
-            .fillColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.getUIContext().animateTo(
-                {
-                  duration: 300,
-                  curve: Curve.EaseOut,
-                  playMode: PlayMode.Normal,
-                },
-                () => {
-                  this.isShowSideBar = !this.isShowSideBar;
-                });
-            });
+        if (!this.isMultiChoice) {
+          Column() {
+            Image(this.isShowSideBar ? $r('app.media.open_sidebar') : $r('app.media.close_sidebar'))
+              .headerButtonStyle()
+              .fillColor($r('sys.color.font_primary'))
+              .onClick(() => {
+                this.getUIContext().animateTo(
+                  {
+                    duration: 300,
+                    curve: Curve.EaseOut,
+                    playMode: PlayMode.Normal,
+                  },
+                  () => {
+                    this.isShowSideBar = !this.isShowSideBar;
+                  });
+              });
+          }
+          .margin({
+            top: 12 + (AppStorage.get('TopRectHeight') as number),
+            left: 16,
+          });
         }
-        .margin({
-          top: 12 + (AppStorage.get('TopRectHeight') as number),
-          left: 12,
-        });
       };
     }
     .hideTitleBar(true)
