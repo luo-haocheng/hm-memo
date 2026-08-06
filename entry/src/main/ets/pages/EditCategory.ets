@@ -97,7 +97,7 @@ export struct EditCategory {
 
                     Blank();
 
-                    Text(String(item.totalCount))
+                    Text(String(item.memoCount))
                       .fontSize(18)
                       .fontWeight(FontWeight.Medium)
                       .fontColor($r('sys.color.font_primary'));

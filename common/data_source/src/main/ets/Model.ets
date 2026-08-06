@@ -36,11 +36,11 @@ export class Category {
   /**
    * 数量
    */
-  @Trace totalCount: number = 0;
+  @Trace memoCount: number = 0;
 
-  constructor(name: string, totalCount: number, id?: string) {
+  constructor(name: string, memoCount: number, id?: string) {
     this.name = name;
-    this.totalCount = totalCount;
+    this.memoCount = memoCount;
     this.id = id ? id : new Date().getTime().toString();
   }
 }

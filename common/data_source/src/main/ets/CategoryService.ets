@@ -7,7 +7,7 @@ import { Memo } from 'memo_editor';
  */
 function initCategoryList(): Array<Category> {
   let categoryList: Array<Category> = [];
-  categoryList.push(new Category('全部备忘', 0, '-1',));
+  categoryList.push(new Category('默认', 0, '-1',));
   console.info(`initCategoryList success.`);
   return categoryList;
 }
@@ -53,23 +53,23 @@ export class CategoryService {
       }
       console.info(`Load category success.`);
     }
-    this.resetTotalCount(memoList);
+    this.resetMemoCount(memoList);
   }
 
-  private resetTotalCount(memoList: Array<Memo>) {
+  private resetMemoCount(memoList: Array<Memo>) {
     this.categoryList.forEach((category) => {
-      category.totalCount = 0;
+      category.memoCount = 0;
     });
     const defaultCategory = this.categoryList.find(category => category.id === '-1');
     if (defaultCategory) {
-      defaultCategory.totalCount = memoList.length;
+      defaultCategory.memoCount = memoList.length;
     }
     memoList.filter((memo) => {
       const matchedCategory = this.categoryList.find(category => category.id === memo.categoryId);
       if (matchedCategory) {
-        matchedCategory.totalCount += 1;
+        matchedCategory.memoCount += 1;
         console.info(
-          `Increment totalCount for category ${matchedCategory.id}, new count: ${matchedCategory.totalCount}`);
+          `Increment memo count for category ${matchedCategory.id}, new count: ${matchedCategory.memoCount}`);
       }
     });
   }
@@ -112,7 +112,7 @@ export class CategoryService {
       }
       return false;
     }
-    this.categoryList.push(new Category(category.name, category.totalCount));
+    this.categoryList.push(new Category(category.name, category.memoCount));
 
     kvStore.put('Category_' + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
 
@@ -128,7 +128,7 @@ export class CategoryService {
       return;
     }
     const target = this.categoryList[idx];
-    this.categoryList.splice(idx, 1, new Category(category.name, target.totalCount, target.id));
+    this.categoryList.splice(idx, 1, new Category(category.name, target.memoCount, target.id));
     console.info(`Category List: ${JSON.stringify(this.categoryList)}`);
     // target.name = category.name;
     kvStore.put(`Category_` + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
@@ -157,7 +157,7 @@ export class CategoryService {
     if (originalCategoryId !== '-1') {
       let originalCategory = this.getCategoryById(originalCategoryId);
       if (originalCategory) {
-        originalCategory.totalCount--;
+        originalCategory.memoCount--;
         kvStore.put('Category_' + originalCategory.id, JSON.stringify(originalCategory).replace('/__ob_/g', ''));
       }
     }
@@ -165,7 +165,7 @@ export class CategoryService {
     let targetCategory = this.getCategoryById(targetCategoryId);
     if (targetCategory) {
       if (targetCategory.id !== '-1') {
-        targetCategory.totalCount++;
+        targetCategory.memoCount++;
         kvStore.put('Category_' + targetCategory.id, JSON.stringify(targetCategory).replace('/__ob_/g', ''));
       }
     }

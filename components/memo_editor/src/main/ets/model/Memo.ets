@@ -1,14 +1,16 @@
 @ObservedV2
 export class Memo {
-  id: string = '';
   @Trace title: string = '';
+  @Trace description: string = '';
+  @Trace isLocked: boolean = false;
+  @Trace isFavorite: boolean = false;
+  @Trace isSelected: boolean = false;
+  id: string = '';
   categoryId: string = '';
-  styledString: MutableStyledString;
-  serializedStyledString: string;
   createTime: string = '';
   updateTime: string = '';
-  @Trace isSelected: boolean = false;
-  @Trace  description: string = '';
+  styledString: MutableStyledString;
+  serializedStyledString: string;
 
   constructor(styledString: MutableStyledString, title?: string, categoryId?: string) {
     this.styledString = styledString;

@@ -16,8 +16,8 @@ export class MemoService {
     return MemoService._instance;
   }
 
-  @Trace private memoList: Memo[] = [];
-  @Trace private dumpsters: Memo[] = [];
+  @Trace memoList: Memo[] = [];
+  @Trace dumpsters: Memo[] = [];
 
   /**
    * 读取有效备忘
@@ -62,9 +62,9 @@ export class MemoService {
 
     const category = this.categoryService.getCategoryList().find((item) => item.id === memo.categoryId);
     if (category) {
-      category.totalCount++;
+      category.memoCount++;
       if (category.id === '-1') {
-        this.categoryService.getCategoryList()[0].totalCount++;
+        this.categoryService.getCategoryList()[0].memoCount++;
       }
     }
 
@@ -100,9 +100,9 @@ export class MemoService {
     // 更新分类计数
     const category = this.categoryService.getCategoryById(memo.categoryId);
     if (category) {
-      category.totalCount++;
+      category.memoCount++;
       if (category.id !== '-1') {
-        this.categoryService.getCategoryList()[0].totalCount++;
+        this.categoryService.getCategoryList()[0].memoCount++;
       }
     }
     // 持久化
@@ -138,11 +138,11 @@ export class MemoService {
     this.memoList.splice(index, 1);
     this.dumpsters.push(delMemo);
     // 相应分类数量减一
-    this.categoryService.getCategoryList()[0].totalCount--;
+    this.categoryService.getCategoryList()[0].memoCount--;
     if (categoryId && categoryId !== '-1') {
       const category = this.categoryService.getCategoryById(categoryId);
       if (category) {
-        category.totalCount--;
+        category.memoCount--;
       }
     }
     // 从有效备忘持久化中删除，持久化到删除备忘
@@ -233,6 +233,8 @@ export class MemoService {
     const memo = new Memo(value);
     memo.id = serializedMemo.id;
     memo.title = serializedMemo.title;
+    memo.isLocked = serializedMemo.isLocked;
+    memo.isFavorite = serializedMemo.isFavorite;
     memo.categoryId = serializedMemo.categoryId;
     memo.createTime = serializedMemo.createTime;
     memo.updateTime = serializedMemo.updateTime;

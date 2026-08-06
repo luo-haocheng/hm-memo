@@ -14,7 +14,7 @@ import {
   toolBarList,
   ToolBarName
 } from '../constants/HomeUIConstant';
-import { ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2 } from '@kit.ArkUI';
+import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 
 @Entry
@@ -24,7 +24,7 @@ struct Index {
   uiContext: UIContext = this.getUIContext() as UIContext;
   categoryService: CategoryService = CategoryService.instance;
   securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
-  segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '代办' }]);
+  segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local memoList: Array<Memo> = [];
@@ -40,6 +40,34 @@ struct Index {
   @Local showListType: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local currentCategory: Category = this.categoryService.getFirstCategory();
   @Local sections: WaterFlowSections = new WaterFlowSections();
+
+  @Computed
+  get allMemoCount() {
+    return this.memoService.memoList.length;
+  }
+
+  @Computed
+  get favoriteMemoCount() {
+    let count = 0;
+    this.memoService.memoList.forEach((memo) => {
+      count += memo.isFavorite ? 1 : 0;
+    });
+    return count;
+  }
+
+  @Computed
+  get lockedMemoCount() {
+    let count = 0;
+    this.memoService.memoList.forEach((memo) => {
+      count += memo.isLocked ? 1 : 0;
+    });
+    return count;
+  }
+
+  @Computed
+  get delMemoCount() {
+    return this.memoService.dumpsters.length;
+  }
 
   async aboutToAppear() {
     // 创建KV数据库
@@ -612,7 +640,7 @@ struct Index {
 
                     Blank();
 
-                    Text(String(category.totalCount))
+                    Text(String(category.memoCount))
                       .fontSize(16);
                   }
                   .height(50)
@@ -669,6 +697,113 @@ struct Index {
       right: $r('sys.float.padding_level8'),
     })
     .backgroundColor($r('sys.color.background_secondary'));
+  }
+
+  @Builder
+  systemCategoryBuilder(icon: Resource, name: string, count: Binding<number>) {
+    Row() {
+      Row({ space: 16 }) {
+        Image(icon)
+          .width(24)
+          .height(24)
+          .fillColor($r('sys.color.font_secondary'));
+
+        Text(name)
+          .fontSize(13)
+          .fontWeight(600)
+          .fontColor($r('sys.color.font_primary'));
+      };
+
+      Text(count.value.toString())
+        .fontSize(13)
+        .fontColor($r('sys.color.font_secondary'));
+    }
+    .padding(8)
+    .width('100%')
+    .borderRadius(12)
+    .justifyContent(FlexAlign.SpaceBetween);
+  }
+
+  @Builder
+  userCategoryBuilder(name: string, count: number) {
+    Row() {
+      Row({ space: 8 }) {
+        Image($r('app.media.folder'))
+          .width(24)
+          .height(24)
+          .fillColor('#EBAC24');
+
+        Text(name)
+          .fontSize(13)
+          .fontWeight(600)
+          .fontColor($r('sys.color.font_primary'));
+      };
+
+      Text(count.toString())
+        .fontSize(13)
+        .fontColor($r('sys.color.font_secondary'));
+    }
+    .padding(8)
+    .width('100%')
+    .justifyContent(FlexAlign.SpaceBetween);
+  }
+
+  @Builder
+  sideBarContent() {
+    Scroll() {
+      Column({ space: 24 }) {
+        Column({ space: 12 }) {
+          this.systemCategoryBuilder($r('app.media.doc'), '全部备忘', UIUtils.makeBinding(() => this.allMemoCount));
+
+          this.systemCategoryBuilder($r('app.media.star'), '收藏', UIUtils.makeBinding(() => this.favoriteMemoCount));
+
+          this.systemCategoryBuilder($r('app.media.lock'), '加锁', UIUtils.makeBinding(() => this.lockedMemoCount));
+
+          this.systemCategoryBuilder($r('app.media.trash'), '最近删除', UIUtils.makeBinding(() => this.delMemoCount));
+        }
+        .width('100%');
+
+        Column({ space: 12 }) {
+          Row() {
+            Text('文件夹')
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.font_secondary'));
+
+            Text('编辑')
+              .fontSize(12)
+              .fontColor('#EBAC24')
+              .fontWeight(FontWeight.Bold);
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+          .justifyContent(FlexAlign.SpaceBetween);
+
+          ForEach(
+            this.categoryService.getCategoryList(),
+            (category: Category) => {
+              this.userCategoryBuilder(category.name, category.memoCount);
+            },
+            (category: Category) => JSON.stringify(category),
+          );
+
+          Row() {
+            Text('新建文件夹')
+              .fontSize(13)
+              .fontColor('#EBAC24')
+              .fontWeight(FontWeight.Bold);
+          }
+          .width('100%')
+          .margin({ top: 12 })
+          .justifyContent(FlexAlign.Center);
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16 });
+    }
+    .contentEndOffset(48)
+    .scrollBar(BarState.Off);
   }
 
   @Builder
@@ -739,18 +874,14 @@ struct Index {
         SideBarContainer(SideBarContainerType.Overlay) {
           Column() {
             Column() {
-              Text('SideBar')
-                .fontSize(24)
-                .fontColor($r('sys.color.font_primary'));
+              this.sideBarContent();
             }
             .width('100%')
-            .height('100%')
-            .margin({ top: 100 })
             .justifyContent(FlexAlign.Start)
-            .alignItems(HorizontalAlign.Center);
+            .alignItems(HorizontalAlign.Center)
+            .margin({ top: 64 + (AppStorage.get('TopRectHeight') as number) });
           }
           .width('100%')
-          .height('100%')
           .backgroundColor($r('sys.color.background_secondary'));
 
           Stack() {
@@ -759,7 +890,7 @@ struct Index {
               this.headerArea();
 
               // 工具栏
-              // this.editorMemoList();
+              this.editorMemoList();
 
               // 备忘列表
               this.showMemoList();
