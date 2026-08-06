@@ -158,47 +158,51 @@ struct Index {
     }
   }
 
+  @Styles
+  headerButtonStyle() {
+    .width(40)
+    .height(40)
+    .padding(8)
+    .borderRadius('50%')
+    .backgroundColor($r('sys.color.comp_background_list_card'));
+  }
+
   @Builder
   headerArea() {
     Row() {
       Image($r('app.media.xmark'))
-        .width(40)
-        .height(40)
-        .padding(8)
-        .borderRadius('50%')
-        .opacity(this.isMultiChoice ? 1 : 0)
-        .backgroundColor('rgba(0, 0, 0, 0.05)')
+        .headerButtonStyle()
         .fillColor($r('sys.color.font_primary'))
+        .visibility(this.isMultiChoice ? Visibility.Visible : Visibility.Hidden)
         .onClick(() => {
           this.memoList.forEach(item => item.isSelected = false);
           this.recoverInitState();
         });
 
       if (this.isMultiChoice) {
-        Text(`已选${this.choiceCount}项`)
-          .fontSize(24)
-          .fontWeight(FontWeight.Medium)
+        Text(`已选择${this.choiceCount}项`)
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.font_primary'));
       } else {
         TabSegmentButtonV2({
           items: this.segBtnItems,
-          enableStateAnimation: true,
           selectedIndex: this.segBtnIndex!!,
+          enableStateAnimation: true,
           itemFontSize: LengthMetrics.vp(12),
           itemSelectedFontSize: LengthMetrics.vp(12),
-          itemSelectedFontColor: ColorMetrics.resourceColor($r('sys.color.font_emphasize')),
+          itemSelectedFontColor: ColorMetrics.numeric(0xEBAC24),
+          buttonMinHeight: LengthMetrics.vp(36),
+          buttonBackgroundColor: ColorMetrics.resourceColor($r('sys.color.comp_background_list_card')),
         })
-          .width(120);
+          .width(120)
+          .height(36);
       }
 
       Image($r('app.media.more_option'))
-        .width(40)
-        .height(40)
-        .padding(8)
-        .borderRadius('50%')
-        .opacity(this.isMultiChoice ? 0 : 1)
-        .backgroundColor('rgba(0, 0, 0, 0.05)')
+        .headerButtonStyle()
         .fillColor($r('sys.color.font_primary'))
+        .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
         .onClick(() => {
           this.appPathStack.pushPathByName('MineView', undefined);
         });
@@ -300,9 +304,9 @@ struct Index {
       .height(50)
       .zIndex(10)
       .borderRadius('50%')
+      .backgroundColor('#EBAC24')
       .justifyContent(FlexAlign.Center)
       .position({ right: 32, bottom: 40 })
-      .backgroundColor($r('sys.color.font_emphasize'))
       .onClick(() => {
         const params: Record<string, Object> = { 'memoId': '', 'currentCategory': this.currentCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
@@ -697,79 +701,92 @@ struct Index {
 
   build() {
     Navigation(this.appPathStack) {
-      SideBarContainer(SideBarContainerType.Overlay) {
-        Column() {
+      Stack({ alignContent: Alignment.TopStart }) {
+        SideBarContainer(SideBarContainerType.Overlay) {
           Column() {
-            Text('SideBar')
-              .fontSize(24)
-              .fontColor($r('sys.color.font_primary'));
+            Column() {
+              Text('SideBar')
+                .fontSize(24)
+                .fontColor($r('sys.color.font_primary'));
+            }
+            .width('100%')
+            .height('100%')
+            .margin({ top: 100 })
+            .justifyContent(FlexAlign.Start)
+            .alignItems(HorizontalAlign.Center);
           }
           .width('100%')
           .height('100%')
-          .margin({ top: 100 })
-          .justifyContent(FlexAlign.Start)
-          .alignItems(HorizontalAlign.Center);
+          .backgroundColor($r('sys.color.background_secondary'));
+
+          Stack() {
+            Column() {
+              // 顶部栏
+              this.headerArea();
+              // 搜索栏
+              this.searchBar();
+              // 工具栏
+              this.editorMemoList();
+              // 备忘列表
+              this.showMemoList();
+              // 多选底部工具栏
+              this.toolBarBuilder();
+              // 新增备忘按钮
+              this.addMemoBuilder();
+            }
+            .width('100%')
+            .height('100%')
+            .padding({ top: (AppStorage.get('TopRectHeight') as number) });
+
+            if (this.isShowSideBar) {
+              Column()
+                .width('100%')
+                .height('100%')
+                .backgroundColor($r('sys.color.ohos_id_color_mask_thin'))
+                .onClick(() => {
+                  this.getUIContext().animateTo(
+                    {
+                      duration: 300,
+                      curve: Curve.EaseOut,
+                      playMode: PlayMode.Normal,
+                    },
+                    () => {
+                      this.isShowSideBar = false;
+                    });
+                });
+            }
+          }
+          .width('100%')
+          .height('100%');
         }
         .width('100%')
         .height('100%')
-        .backgroundColor($r('sys.color.background_secondary'));
+        .sideBarWidth('80%')
+        .showControlButton(false)
+        .showSideBar($$this.isShowSideBar);
 
-        Stack() {
-          Column() {
-            // 顶部栏
-            this.headerArea();
-            // 搜索栏
-            this.searchBar();
-            // 工具栏
-            this.editorMemoList();
-            // 备忘列表
-            this.showMemoList();
-            // 多选底部工具栏
-            this.toolBarBuilder();
-            // 新增备忘按钮
-            this.addMemoBuilder();
-          }
-          .width('100%')
-          .height('100%')
-          .padding({ top: (AppStorage.get('TopRectHeight') as number) });
 
-          if (this.isShowSideBar) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor($r('sys.color.ohos_id_color_mask_thin'))
-              .onClick(() => {
-                this.getUIContext().animateTo(
-                  {
-                    duration: 300,
-                    curve: Curve.EaseOut,
-                    playMode: PlayMode.Normal,
-                  },
-                  () => {
-                    this.isShowSideBar = false;
-                  });
-              });
-          }
+        Column() {
+          Image(this.isShowSideBar ? $r('app.media.open_sidebar') : $r('app.media.close_sidebar'))
+            .headerButtonStyle()
+            .fillColor($r('sys.color.font_primary'))
+            .onClick(() => {
+              this.getUIContext().animateTo(
+                {
+                  duration: 300,
+                  curve: Curve.EaseOut,
+                  playMode: PlayMode.Normal,
+                },
+                () => {
+                  this.isShowSideBar = !this.isShowSideBar;
+                });
+            });
         }
-        .width('100%')
-        .height('100%');
-      }
-      .width('100%')
-      .height('100%')
-      .sideBarWidth('80%')
-      .showSideBar($$this.isShowSideBar)
-      .showControlButton(!this.isMultiChoice)
-      .controlButton({
-        top: 12 + (AppStorage.get('TopRectHeight') as number),
-        left: 12,
-        width: 40,
-        height: 40,
-        icons: {
-          shown: $r('app.media.close_sidebar'),
-          hidden: $r('app.media.open_sidebar'),
-          switching: $r('app.media.open_sidebar'),
-        }
-      });
+        .margin({
+          top: 12 + (AppStorage.get('TopRectHeight') as number),
+          left: 12,
+        });
+      };
     }
     .hideTitleBar(true)
     .mode(NavigationMode.Stack)
