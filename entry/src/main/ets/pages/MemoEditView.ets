@@ -1,5 +1,5 @@
 import { Memo, MemoEditorArea, MemoEditorController } from 'memo_editor';
-import { MemoService } from 'data_source';
+import { MemoService, SystemCategory, UserCategory } from 'data_source';
 import { KVStore } from 'serializer';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 
@@ -137,10 +137,20 @@ struct MemoEditView {
     .menus(this.toolBar())
     .padding({ top: AppStorage.get('TopRectHeight') as number })
     .onReady((ctx: NavDestinationContext) => {
-      let params = ctx.pathInfo.param as Record<string, Object>;
-      let memoId = params.memoId as string;
-      if (memoId == '') {
+      const params = ctx.pathInfo.param as Record<string, Object>;
+      const memoId = params.memoId as string;
+      const sysCategory = params.systemCategory as string;
+      const userCategory = params.userCategory as UserCategory;
+      if (memoId === '') {
         this.isEditMemo = false;
+        if (sysCategory) {
+          this.currentMemo.categoryId = '-1';
+          if (sysCategory === SystemCategory.FAVORITE_MEMO) {
+            this.currentMemo.isFavorite = true;
+          }
+        } else {
+          this.currentMemo.categoryId = userCategory.id;
+        }
       } else {
         this.isEditMemo = true;
         const memo = this.memoService.getMemoById(memoId);

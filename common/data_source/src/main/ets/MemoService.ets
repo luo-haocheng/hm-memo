@@ -1,7 +1,7 @@
 import { Memo } from 'memo_editor';
 import { KVStore, SerializeUtil } from 'serializer';
 import { CategoryService } from './CategoryService';
-import { SortEnum } from './Model';
+import { SortEnum, SystemCategory, UserCategory } from './Model';
 import { UIContext } from '@kit.ArkUI';
 
 @ObservedV2
@@ -32,7 +32,6 @@ export class MemoService {
         await this.addMemo(memo);
         console.info(`Load effective memo ${memo.id} success.`);
       }
-      console.info(`Load effective memo data success.`);
     }
   }
 
@@ -50,7 +49,6 @@ export class MemoService {
 
         console.info(`Load delete memo ${memo.id} success.`);
       }
-      console.info(`Load delete memo data success.`);
     }
   }
 
@@ -63,9 +61,6 @@ export class MemoService {
     const category = this.categoryService.getCategoryList().find((item) => item.id === memo.categoryId);
     if (category) {
       category.memoCount++;
-      if (category.id === '-1') {
-        this.categoryService.getCategoryList()[0].memoCount++;
-      }
     }
 
     if (kvStore && uiContext) {
@@ -138,8 +133,7 @@ export class MemoService {
     this.memoList.splice(index, 1);
     this.dumpsters.push(delMemo);
     // 相应分类数量减一
-    this.categoryService.getCategoryList()[0].memoCount--;
-    if (categoryId && categoryId !== '-1') {
+    if (categoryId) {
       const category = this.categoryService.getCategoryById(categoryId);
       if (category) {
         category.memoCount--;
@@ -191,7 +185,30 @@ export class MemoService {
   }
 
   /**
-   * 查询笔记列表
+   * 根据系统分类查询备忘
+   */
+  getMemosBySystemCategory(sysCategory: SystemCategory): Array<Memo> {
+    switch (sysCategory) {
+      case SystemCategory.ALL_MEMO:
+        return this.memoList;
+      case SystemCategory.FAVORITE_MEMO:
+        return this.memoList.filter(memo => memo.isFavorite);
+      case SystemCategory.LOCKED_MEMO:
+        return this.memoList.filter(memo => memo.isLocked);
+      case SystemCategory.DELETE_MEMO:
+        return this.dumpsters;
+    }
+  }
+
+  /**
+   * 根据用户分类查询备忘
+   */
+  getMemosByUserCategory(userCategory: UserCategory): Array<Memo> {
+    return this.memoList.filter(memo => memo.categoryId === userCategory.id);
+  }
+
+  /**
+   * 查询备忘列表
    */
   public getMemoList(id?: string, sortType?: SortEnum, keyWord: string = '') {
     let memoList: Memo[] = this.search(keyWord);

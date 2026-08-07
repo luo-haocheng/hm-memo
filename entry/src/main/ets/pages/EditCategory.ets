@@ -1,4 +1,4 @@
-import { Category, CategoryService, MemoService } from 'data_source';
+import { CategoryService, MemoService, UserCategory } from 'data_source';
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
 import { DialogUtil, StringUtil } from 'utils';
@@ -21,10 +21,10 @@ export struct EditCategory {
   @Local categoryId: string = '';
   @Local isEditCategory: boolean = true;
   @Local isEditCategoryName: boolean = true;
-  @Local currentCategory: Category = this.categoryService.getFirstCategory();
+  @Local currentCategory: UserCategory = this.categoryService.getDefaultCategory();
   @Local memoList: Memo[] | undefined;
 
-  selectFontColor(item: Category): ResourceStr {
+  selectFontColor(item: UserCategory): ResourceStr {
     if (this.isEditCategory) {
       return this.currentCategory.id === item.id ? $r('sys.color.font_primary') : $r('sys.color.font_secondary');
     }
@@ -32,7 +32,7 @@ export struct EditCategory {
       $r('sys.color.font_tertiary') : $r('sys.color.font_secondary');
   }
 
-  selectFontWeight(item: Category): FontWeight {
+  selectFontWeight(item: UserCategory): FontWeight {
     if (this.isEditCategory) {
       return this.currentCategory.id === item.id ? FontWeight.Medium : FontWeight.Regular;
     }
@@ -47,7 +47,7 @@ export struct EditCategory {
   }
 
   @Builder
-  categoryEnd(item: Category) {
+  categoryEnd(item: UserCategory) {
     Row() {
       Image($r('app.media.edit_category'))
         .width(40)
@@ -87,7 +87,7 @@ export struct EditCategory {
           List({ space: 12, scroller: this.listScroller }) {
             ForEach(
               this.categoryService.getCategoryList(),
-              (item: Category) => {
+              (item: UserCategory) => {
                 ListItem() {
                   Row() {
                     Text(item.name)
@@ -134,7 +134,7 @@ export struct EditCategory {
                   }
                 });
               },
-              (item: Category) => JSON.stringify(item),
+              (item: UserCategory) => JSON.stringify(item),
             );
           };
 
@@ -174,7 +174,7 @@ export struct EditCategory {
     .backgroundColor($r('sys.color.background_secondary'))
     .onReady((ctx: NavDestinationContext) => {
       let params = ctx.pathInfo.param as Record<string, Object>;
-      this.currentCategory = params.currentCategory as Category;
+      this.currentCategory = params.curUserCategory as UserCategory;
       this.isEditCategory = params.isEditCategory as boolean;
       if (!this.isEditCategory) {
         this.memoList = params.memoList as Memo[];
@@ -186,12 +186,12 @@ export struct EditCategory {
 
 class EditCategoryParam {
   isEdit: boolean;
-  category: Category | undefined;
+  category: UserCategory | undefined;
   scroller: ListScroller;
   kvStore: KVStore;
   uiContext: UIContext;
 
-  constructor(isEdit: boolean, category: Category | undefined, scroller: ListScroller, kvStore: KVStore,
+  constructor(isEdit: boolean, category: UserCategory | undefined, scroller: ListScroller, kvStore: KVStore,
     uiContext: UIContext) {
     this.isEdit = isEdit;
     this.category = category;
@@ -270,7 +270,8 @@ struct EditCategoryDialog {
               this.categoryService.updateCategory(this.params.category, this.params.kvStore);
             }
           } else {
-            this.categoryService.addCategory(new Category(this.newName, 0), this.params.kvStore, this.params.uiContext);
+            this.categoryService.addCategory(new UserCategory(this.newName, 0), this.params.kvStore,
+              this.params.uiContext);
           }
 
           DialogUtil.closeDialog();

@@ -1,6 +1,6 @@
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
-import { Category, CategoryService, MemoService, SortEnum } from 'data_source';
+import { CategoryService, MemoService, SortEnum, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
 import { DateUtil } from 'utils';
 import { DateConstants } from 'utils/src/main/ets/constants/DateConstants';
@@ -12,7 +12,7 @@ import {
   SortType,
   ToolBar,
   toolBarList,
-  ToolBarName
+  ToolBarName,
 } from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
@@ -23,11 +23,9 @@ struct Index {
   memoService: MemoService = MemoService.instance;
   uiContext: UIContext = this.getUIContext() as UIContext;
   categoryService: CategoryService = CategoryService.instance;
-  securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
   segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
-  @Local memoList: Array<Memo> = [];
   @Local isShowSideBar: boolean = false;
   @Local isMultiChoice: boolean = false;
   @Local segBtnIndex: number = 0;
@@ -38,8 +36,27 @@ struct Index {
   @Local openCategorySheet: boolean = false;
   @Local sortBy: SortEnum = SortEnum.CREATE_TIME;
   @Local showListType: ShowMethodEnum = ShowMethodEnum.LIST;
-  @Local currentCategory: Category = this.categoryService.getFirstCategory();
+  @Local curSystemCategory?: SystemCategory = SystemCategory.ALL_MEMO;
+  @Local curUserCategory: UserCategory = this.categoryService.getDefaultCategory();
   @Local sections: WaterFlowSections = new WaterFlowSections();
+
+  @Computed
+  get currentMemoList() {
+    if (this.curSystemCategory) {
+      return this.memoService.getMemosBySystemCategory(this.curSystemCategory);
+    } else {
+      return this.memoService.getMemosByUserCategory(this.curUserCategory);
+    }
+  }
+
+  @Computed
+  get currentHeader() {
+    if (this.curSystemCategory) {
+      return this.curSystemCategory;
+    } else {
+      return this.curUserCategory.name;
+    }
+  }
 
   @Computed
   get allMemoCount() {
@@ -72,23 +89,21 @@ struct Index {
   async aboutToAppear() {
     // 创建KV数据库
     this.kvStore = new KVStore();
-    this.kvStore.kvStore = await this.kvStore.createKVStore(false, this.securityLevel, this.uiContext);
+    const securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
+    this.kvStore.kvStore = await this.kvStore.createKVStore(false, securityLevel, this.uiContext);
     // 加载备忘数据
     await this.memoService.loadEffectiveMemo(this.kvStore);
     await this.memoService.loadDeleteMemo(this.kvStore);
-    // 填充备忘列表
-    this.memoList = this.memoService.getMemoList();
     // 加载分类数据
-    await this.categoryService.loadCategoryList(this.kvStore, this.memoList);
+    await this.categoryService.loadCategoryList(this.kvStore, this.currentMemoList);
 
     // 设置瀑布流分组信息
     this.sections.push({ itemsCount: 1, crossCount: 1 });
-    this.sections.push({ itemsCount: this.memoList.length, crossCount: 2 });
+    this.sections.push({ itemsCount: this.currentMemoList.length, crossCount: 2 });
   }
 
-  resetCategory(category: Category) {
-    this.currentCategory = category;
-    this.memoList = this.memoService.getMemoList(this.currentCategory.id);
+  resetCategory(category: UserCategory) {
+    this.curUserCategory = category;
     this.openCategorySheet = false;
   }
 
@@ -108,7 +123,7 @@ struct Index {
 
   // 列表排序
   sort = (type: SortEnum) => {
-    this.onSortConfirm(this.currentCategory.id, type, '');
+    this.onSortConfirm(this.curUserCategory.id, type, '');
   };
   // 列表展开方式
   toggleShowType = (userWaterFlow: ShowMethodEnum) => {
@@ -133,7 +148,7 @@ struct Index {
   // 获取选中的笔记
   getChoiceMemo(): Memo[] {
     let choiceMemoArr: Memo[] = [];
-    this.memoList.forEach(memo => {
+    this.currentMemoList.forEach(memo => {
       if (memo.isSelected) {
         choiceMemoArr.push(memo);
       }
@@ -144,12 +159,12 @@ struct Index {
 
   // 全选
   handleChoiceAll() {
-    if (this.choiceCount === this.memoList.length) {
-      this.memoList.forEach(memo => memo.isSelected = false);
+    if (this.choiceCount === this.currentMemoList.length) {
+      this.currentMemoList.forEach(memo => memo.isSelected = false);
       this.choiceCount = 0;
     } else {
-      this.memoList.forEach(memo => memo.isSelected = true);
-      this.choiceCount = this.memoList.length;
+      this.currentMemoList.forEach(memo => memo.isSelected = true);
+      this.choiceCount = this.currentMemoList.length;
     }
   }
 
@@ -162,11 +177,15 @@ struct Index {
 
     const choiceMemoArr = this.getChoiceMemo();
     if (choiceMemoArr.length === 0) {
-      this.getUIContext().getPromptAction().showToast({
-        duration: 1500,
-        message: '还未选中任何备忘',
-        alignment: Alignment.Center,
-      });
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          duration: 1500,
+          message: '还未选中任何备忘',
+          alignment: Alignment.Center,
+        });
+      } catch (error) {
+        console.error(`Failed to showToast. Cause: ${JSON.stringify(error)}`);
+      }
       return;
     }
 
@@ -175,9 +194,9 @@ struct Index {
         {
           'isEditCategory': false,
           'memoList': choiceMemoArr,
-          'currentCategory': this.currentCategory,
+          'curUserCategory': this.curUserCategory,
           'resetCategory': () => {
-            this.resetCategory(this.currentCategory);
+            this.resetCategory(this.curUserCategory);
           }
         };
       this.appPathStack.pushPathByName('CategoryEdit', params);
@@ -206,7 +225,7 @@ struct Index {
           .fillColor($r('sys.color.font_primary'))
           .visibility(this.isMultiChoice ? Visibility.Visible : Visibility.Hidden)
           .onClick(() => {
-            this.memoList.forEach(item => item.isSelected = false);
+            this.currentMemoList.forEach(memo => memo.isSelected = false);
             this.recoverInitState();
           });
 
@@ -242,15 +261,17 @@ struct Index {
       .justifyContent(FlexAlign.SpaceBetween);
 
       Column({ space: 5 }) {
-        Text('全部备忘')
+        Text(this.currentHeader)
           .fontSize(30)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.font_primary'));
 
-        Text(`${this.memoList.length} 条备忘`)
-          .fontSize(14)
-          .fontWeight(FontWeight.Regular)
-          .fontColor($r('sys.color.font_secondary'));
+        if (this.currentMemoList.length > 0) {
+          Text(`${this.currentMemoList.length} 条备忘`)
+            .fontSize(14)
+            .fontWeight(FontWeight.Regular)
+            .fontColor($r('sys.color.font_secondary'));
+        }
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start);
@@ -275,14 +296,10 @@ struct Index {
       .placeholderFont({ size: $r('sys.float.Body_M') })
       .backgroundColor($r('sys.color.comp_background_list_card'))
       .onSubmit((value: string) => {
-        // 提交搜索
-        this.memoList = this.onSearch(this.currentCategory.id, value, this.sortBy);
+        // todo
       })
       .onChange((value: string) => {
-        if (!value) {
-          // 清空搜索时恢复列表
-          this.memoList = this.onSearch(this.currentCategory.id, '', this.sortBy);
-        }
+        // todo
       });
   }
 
@@ -291,7 +308,7 @@ struct Index {
     if (!this.isMultiChoice) {
       Row() {
         Row({ space: 4 }) {
-          Text(this.currentCategory.name)
+          Text(this.curUserCategory.name)
             .fontSize(14)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('sys.color.font_primary'));
@@ -344,23 +361,30 @@ struct Index {
 
   @Builder
   addMemoBuilder() {
-    if (!this.isMultiChoice) {
+    if (
+      !this.isMultiChoice &&
+        this.curSystemCategory !== SystemCategory.LOCKED_MEMO &&
+        this.curSystemCategory !== SystemCategory.DELETE_MEMO
+    ) {
       Row() {
         SymbolGlyph($r('sys.symbol.plus'))
+          .padding(8)
           .fontSize(35)
-          .fontColor([Color.White]);
+          .fontColor([Color.White])
+          .borderRadius('50%')
+          .backgroundColor('#EBAC24')
+          .onClick(() => {
+            const params: Record<string, Object> = {
+              'memoId': '',
+              'userCategory': this.curUserCategory,
+              'systemCategory': this.curSystemCategory ?? '',
+            };
+            this.appPathStack.pushPathByName('MemoEdit', params);
+          });
       }
-      .width(50)
-      .height(50)
-      .zIndex(10)
-      .borderRadius('50%')
-      .backgroundColor('#EBAC24')
-      .justifyContent(FlexAlign.Center)
-      .position({ right: 32, bottom: 40 })
-      .onClick(() => {
-        const params: Record<string, Object> = { 'memoId': '', 'currentCategory': this.currentCategory };
-        this.appPathStack.pushPathByName('MemoEdit', params);
-      });
+      .width('100%')
+      .position({ bottom: 40 })
+      .justifyContent(FlexAlign.Center);
     }
   }
 
@@ -436,10 +460,10 @@ struct Index {
       if (this.isMultiChoice) {
         item.isSelected = !item.isSelected;
         let choiceCount = 0;
-        this.memoList.forEach(item => choiceCount += item.isSelected ? 1 : 0);
+        this.currentMemoList.forEach(memo => choiceCount += memo.isSelected ? 1 : 0);
         this.choiceCount = choiceCount;
       } else {
-        const params: Record<string, Object> = { 'memoId': item.id, 'currentCategory': this.currentCategory };
+        const params: Record<string, Object> = { 'memoId': item.id, 'curUserCategory': this.curUserCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
       }
     });
@@ -459,10 +483,10 @@ struct Index {
           const params: Record<string, Object> =
             {
               'isEditCategory': false,
-              'currentCategory': this.currentCategory,
+              'curUserCategory': this.curUserCategory,
               'memoList': [memo],
               'resetCategory': () => {
-                this.resetCategory(this.currentCategory);
+                this.resetCategory(this.curUserCategory);
               }
             };
           this.appPathStack.pushPathByName('CategoryEdit', params);
@@ -492,7 +516,7 @@ struct Index {
         };
 
         ForEach(
-          this.memoList,
+          this.currentMemoList,
           (item: Memo) => {
             ListItem() {
               this.cardItem(item, 1);
@@ -514,7 +538,8 @@ struct Index {
           (item: Memo) => JSON.stringify(item),
         );
       }
-      .scrollBar(BarState.Off);
+      .scrollBar(BarState.Off)
+      .contentEndOffset(96);
     }
     .width('100%')
     .layoutWeight(1)
@@ -534,7 +559,7 @@ struct Index {
         };
 
         ForEach(
-          this.memoList,
+          this.currentMemoList,
           (item: Memo) => {
             FlowItem() {
               this.cardItem(item, 9);
@@ -563,25 +588,18 @@ struct Index {
   @Builder
   emptyMemos() {
     Column() {
-      this.searchBar();
-
       Image($r('app.media.empty_memo'))
         .width(120)
         .height(120);
 
-      Text('岁月悠悠，心事悄悄，记录一下吧')
+      Text('没有备忘')
         .fontSize(12)
         .fontColor($r('sys.color.font_tertiary'));
     }
-    .height(100)
     .width('100%')
+    .layoutWeight(1)
     .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({
-      top: 10,
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-    });
+    .alignItems(HorizontalAlign.Center);
   }
 
   @Builder
@@ -605,9 +623,9 @@ struct Index {
 
   @Builder
   showMemoList() {
-    if (this.isSearching && this.memoList.length === 0) {
+    if (this.isSearching && this.currentMemoList.length === 0) {
       this.searchNoResult();
-    } else if (!this.isSearching && this.memoList.length === 0) {
+    } else if (!this.isSearching && this.currentMemoList.length === 0) {
       this.emptyMemos();
     } else if (this.showListType === ShowMethodEnum.LIST) {
       this.cardList();
@@ -623,7 +641,7 @@ struct Index {
         List() {
           ForEach(
             this.categoryService.getCategoryList(),
-            (category: Category, index: number) => {
+            (category: UserCategory, index: number) => {
               ListItem() {
                 Column() {
                   if (index !== 0) {
@@ -634,9 +652,9 @@ struct Index {
                   Row() {
                     Text(category.name)
                       .fontSize(16)
-                      .fontColor(this.currentCategory.id === category.id ?
+                      .fontColor(this.curUserCategory.id === category.id ?
                         $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-                      .fontWeight(this.currentCategory.id === category.id ? FontWeight.Medium : FontWeight.Regular);
+                      .fontWeight(this.curUserCategory.id === category.id ? FontWeight.Medium : FontWeight.Regular);
 
                     Blank();
 
@@ -653,7 +671,7 @@ struct Index {
                 this.resetCategory(category);
               });
             },
-            (category: Category) => JSON.stringify(category),
+            (category: UserCategory) => JSON.stringify(category),
           );
         }
         .borderRadius(8)
@@ -684,9 +702,9 @@ struct Index {
       .backgroundColor('#FFAA00')
       .onClick(() => {
         this.openCategorySheet = false;
-        if (this.currentCategory) {
+        if (this.curUserCategory) {
           const params: Record<string, Object | undefined> =
-            { 'isEditCategory': true, 'currentCategory': this.currentCategory };
+            { 'isEditCategory': true, 'curUserCategory': this.curUserCategory };
           this.appPathStack.pushPathByName('CategoryEdit', params);
         }
       });
@@ -700,7 +718,7 @@ struct Index {
   }
 
   @Builder
-  systemCategoryBuilder(icon: Resource, name: string, count: Binding<number>) {
+  systemCategoryBuilder(icon: Resource, category: SystemCategory, count: Binding<number>) {
     Row() {
       Row({ space: 16 }) {
         Image(icon)
@@ -708,7 +726,7 @@ struct Index {
           .height(24)
           .fillColor($r('sys.color.font_secondary'));
 
-        Text(name)
+        Text(category)
           .fontSize(13)
           .fontWeight(600)
           .fontColor($r('sys.color.font_primary'));
@@ -721,11 +739,24 @@ struct Index {
     .padding(8)
     .width('100%')
     .borderRadius(12)
-    .justifyContent(FlexAlign.SpaceBetween);
+    .justifyContent(FlexAlign.SpaceBetween)
+    .backgroundColor(category === this.curSystemCategory ? '#22EBAC24' : Color.Transparent)
+    .onClick(() => {
+      this.curSystemCategory = category;
+      this.getUIContext().animateTo(
+        {
+          duration: 300,
+          curve: Curve.EaseOut,
+          playMode: PlayMode.Normal,
+        },
+        () => {
+          this.isShowSideBar = !this.isShowSideBar;
+        });
+    });
   }
 
   @Builder
-  userCategoryBuilder(name: string, count: number) {
+  userCategoryBuilder(category: Binding<UserCategory>) {
     Row() {
       Row({ space: 8 }) {
         Image($r('app.media.folder'))
@@ -733,19 +764,36 @@ struct Index {
           .height(24)
           .fillColor('#EBAC24');
 
-        Text(name)
+        Text(category.value.name)
           .fontSize(13)
           .fontWeight(600)
           .fontColor($r('sys.color.font_primary'));
       };
 
-      Text(count.toString())
+      Text(category.value.memoCount.toString())
         .fontSize(13)
         .fontColor($r('sys.color.font_secondary'));
     }
     .padding(8)
     .width('100%')
-    .justifyContent(FlexAlign.SpaceBetween);
+    .borderRadius(12)
+    .justifyContent(FlexAlign.SpaceBetween)
+    .backgroundColor(
+      !this.curSystemCategory && this.curUserCategory.id === category.value.id ? '#22EBAC24' : Color.Transparent
+    )
+    .onClick(() => {
+      this.curSystemCategory = undefined;
+      this.curUserCategory = category.value;
+      this.getUIContext().animateTo(
+        {
+          duration: 300,
+          curve: Curve.EaseOut,
+          playMode: PlayMode.Normal,
+        },
+        () => {
+          this.isShowSideBar = !this.isShowSideBar;
+        });
+    });
   }
 
   @Builder
@@ -753,13 +801,29 @@ struct Index {
     Scroll() {
       Column({ space: 24 }) {
         Column({ space: 12 }) {
-          this.systemCategoryBuilder($r('app.media.doc'), '全部备忘', UIUtils.makeBinding(() => this.allMemoCount));
+          this.systemCategoryBuilder(
+            $r('app.media.doc'),
+            SystemCategory.ALL_MEMO,
+            UIUtils.makeBinding(() => this.allMemoCount)
+          );
 
-          this.systemCategoryBuilder($r('app.media.star'), '收藏', UIUtils.makeBinding(() => this.favoriteMemoCount));
+          this.systemCategoryBuilder(
+            $r('app.media.star'),
+            SystemCategory.FAVORITE_MEMO,
+            UIUtils.makeBinding(() => this.favoriteMemoCount)
+          );
 
-          this.systemCategoryBuilder($r('app.media.lock'), '加锁', UIUtils.makeBinding(() => this.lockedMemoCount));
+          this.systemCategoryBuilder(
+            $r('app.media.lock'),
+            SystemCategory.LOCKED_MEMO,
+            UIUtils.makeBinding(() => this.lockedMemoCount)
+          );
 
-          this.systemCategoryBuilder($r('app.media.trash'), '最近删除', UIUtils.makeBinding(() => this.delMemoCount));
+          this.systemCategoryBuilder(
+            $r('app.media.trash'),
+            SystemCategory.DELETE_MEMO,
+            UIUtils.makeBinding(() => this.delMemoCount)
+          );
         }
         .width('100%');
 
@@ -781,10 +845,10 @@ struct Index {
 
           ForEach(
             this.categoryService.getCategoryList(),
-            (category: Category) => {
-              this.userCategoryBuilder(category.name, category.memoCount);
+            (category: UserCategory) => {
+              this.userCategoryBuilder(UIUtils.makeBinding(() => category));
             },
-            (category: Category) => JSON.stringify(category),
+            (category: UserCategory) => JSON.stringify(category),
           );
 
           Row() {

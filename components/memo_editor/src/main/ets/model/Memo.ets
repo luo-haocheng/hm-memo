@@ -6,7 +6,7 @@ export class Memo {
   @Trace isFavorite: boolean = false;
   @Trace isSelected: boolean = false;
   id: string = '';
-  categoryId: string = '';
+  categoryId: string = '-1';
   createTime: string = '';
   updateTime: string = '';
   styledString: MutableStyledString;

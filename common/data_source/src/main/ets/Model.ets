@@ -1,4 +1,14 @@
 /**
+ * 系统备忘分类
+ */
+export enum SystemCategory {
+  ALL_MEMO = '全部备忘',
+  FAVORITE_MEMO = '收藏',
+  LOCKED_MEMO = '加锁',
+  DELETE_MEMO = '最近删除',
+}
+
+/**
  * 排序方式
  */
 export enum SortEnum {
@@ -24,7 +34,7 @@ export enum SortEnum {
  * 分类
  */
 @ObservedV2
-export class Category {
+export class UserCategory {
   /**
    * id
    */

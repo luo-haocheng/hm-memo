@@ -1,14 +1,13 @@
 import { KVStore, SerializeUtil } from 'serializer';
-import { Category } from './Model';
+import { UserCategory } from './Model';
 import { Memo } from 'memo_editor';
 
 /**
  * 初始化分类列表
  */
-function initCategoryList(): Array<Category> {
-  let categoryList: Array<Category> = [];
-  categoryList.push(new Category('默认', 0, '-1',));
-  console.info(`initCategoryList success.`);
+function initCategoryList(): Array<UserCategory> {
+  let categoryList: Array<UserCategory> = [];
+  categoryList.push(new UserCategory('默认', 0, '-1',));
   return categoryList;
 }
 
@@ -37,7 +36,7 @@ export class CategoryService {
   /**
    * 初始化分类数据
    */
-  @Trace private categoryList: Array<Category> = initCategoryList();
+  @Trace categoryList: Array<UserCategory> = initCategoryList();
 
   /**
    * 加载分类列表
@@ -46,12 +45,11 @@ export class CategoryService {
     const dataList = await kvStore.getAll('Category_');
     if (dataList) {
       for (let i = 0; i < dataList.length; i++) {
-        const category = JSON.parse(dataList[i].value as string) as Category;
-        this.categoryList.push(category);
+        const category = JSON.parse(dataList[i].value as string) as UserCategory;
+        this.categoryList.push(new UserCategory(category.name, category.memoCount, category.id));
 
         console.info(`Load category ${category.id} success.`);
       }
-      console.info(`Load category success.`);
     }
     this.resetMemoCount(memoList);
   }
@@ -60,16 +58,12 @@ export class CategoryService {
     this.categoryList.forEach((category) => {
       category.memoCount = 0;
     });
-    const defaultCategory = this.categoryList.find(category => category.id === '-1');
-    if (defaultCategory) {
-      defaultCategory.memoCount = memoList.length;
-    }
-    memoList.filter((memo) => {
+    memoList.forEach((memo) => {
       const matchedCategory = this.categoryList.find(category => category.id === memo.categoryId);
       if (matchedCategory) {
         matchedCategory.memoCount += 1;
-        console.info(
-          `Increment memo count for category ${matchedCategory.id}, new count: ${matchedCategory.memoCount}`);
+      } else {
+        console.info(`Not Matched Memo Category ID: ${memo.categoryId}, ${memo.id}`);
       }
     });
   }
@@ -77,28 +71,28 @@ export class CategoryService {
   /**
    * 获取所有分类
    */
-  getCategoryList(): Array<Category> {
+  getCategoryList(): Array<UserCategory> {
     return this.categoryList;
   }
 
   /**
    * 获取指定ID的分类
    */
-  getCategoryById(id: string): Category | undefined {
+  getCategoryById(id: string): UserCategory | undefined {
     return this.categoryList.find((item) => item.id === id);
   }
 
   /**
    * 获取第一个分类
    */
-  getFirstCategory(): Category {
+  getDefaultCategory(): UserCategory {
     return this.categoryList[0];
   }
 
   /**
    * 新增分类
    */
-  addCategory(category: Category, kvStore: KVStore, uiContext: UIContext): boolean {
+  addCategory(category: UserCategory, kvStore: KVStore, uiContext: UIContext): boolean {
     const isDuplicateCategory = this.categoryList.find((item) => item.name === category.name);
     if (isDuplicateCategory) {
       try {
@@ -112,7 +106,8 @@ export class CategoryService {
       }
       return false;
     }
-    this.categoryList.push(new Category(category.name, category.memoCount));
+
+    this.categoryList.push(category);
 
     kvStore.put('Category_' + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
 
@@ -122,13 +117,13 @@ export class CategoryService {
   /**
    * 更新分类
    */
-  updateCategory(category: Category, kvStore: KVStore) {
+  updateCategory(category: UserCategory, kvStore: KVStore) {
     const idx = this.categoryList.findIndex((item) => item.id === category.id);
     if (idx === -1) {
       return;
     }
     const target = this.categoryList[idx];
-    this.categoryList.splice(idx, 1, new Category(category.name, target.memoCount, target.id));
+    this.categoryList.splice(idx, 1, new UserCategory(category.name, target.memoCount, target.id));
     console.info(`Category List: ${JSON.stringify(this.categoryList)}`);
     // target.name = category.name;
     kvStore.put(`Category_` + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
