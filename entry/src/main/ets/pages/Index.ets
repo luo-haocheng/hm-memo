@@ -22,6 +22,7 @@ import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentB
 struct Index {
   memoService: MemoService = MemoService.instance;
   categoryService: CategoryService = CategoryService.instance;
+  createCategoryDialogId: number = 0;
   scroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
   segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
@@ -31,6 +32,10 @@ struct Index {
   @Local isMultiChoice: boolean = false;
   @Local segBtnIndex: number = 0;
   @Local choiceCount: number = 0;
+  @Local newCategoryName: string = '';
+  @Local isEditCategory: boolean = false;
+  @Local duplicateCategoryName: boolean = false;
+  @Local curEditCategory?: UserCategory = undefined;
   @Local searchKeyword: string = '';
   @Local isSearching: boolean = false;
   @Local openSortSheet: boolean = false;
@@ -47,15 +52,6 @@ struct Index {
       return this.memoService.getMemosBySystemCategory(this.curSystemCategory);
     } else {
       return this.memoService.getMemosByUserCategory(this.curUserCategory);
-    }
-  }
-
-  @Computed
-  get currentHeader() {
-    if (this.curSystemCategory) {
-      return this.curSystemCategory;
-    } else {
-      return this.curUserCategory.name;
     }
   }
 
@@ -101,6 +97,14 @@ struct Index {
     // 设置瀑布流分组信息
     this.sections.push({ itemsCount: 1, crossCount: 1 });
     this.sections.push({ itemsCount: this.currentMemoList.length, crossCount: 2 });
+  }
+
+  currentHeader() {
+    if (this.curSystemCategory) {
+      return this.curSystemCategory;
+    } else {
+      return this.curUserCategory.name;
+    }
   }
 
   resetCategory(category: UserCategory) {
@@ -262,7 +266,7 @@ struct Index {
       .justifyContent(FlexAlign.SpaceBetween);
 
       Column({ space: 5 }) {
-        Text(this.currentHeader)
+        Text(this.currentHeader())
           .fontSize(30)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.font_primary'));
@@ -688,6 +692,122 @@ struct Index {
   }
 
   @Builder
+  createCategoryDialog() {
+    Column() {
+      Row() {
+        Text(this.isEditCategory ? '编辑文件夹' : '新建文件夹')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold);
+      }
+      .width('100%')
+      .margin({ bottom: 16 })
+      .justifyContent(FlexAlign.Center);
+
+      Row() {
+        Image($r('app.media.folder'))
+          .width(24)
+          .height(24)
+          .fillColor('#EBAC24')
+          .layoutWeight(0);
+
+        TextInput({
+          placeholder: '新建文件夹',
+          text: $$this.newCategoryName,
+        })
+          .fontSize(14)
+          .maxLength(100)
+          .placeholderFont({ size: 14 })
+          .padding({ left: 8, right: 8 })
+          .backgroundColor(Color.Transparent)
+          .layoutWeight(1)
+          .onDidInsert(() => {
+            this.duplicateCategoryName = false;
+          });
+
+      }
+      .width('100%')
+      .borderRadius(16)
+      .padding({ left: 8, right: 8 })
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor($r('sys.color.textfield_bg_color'));
+
+      if (this.duplicateCategoryName) {
+        Text('文件夹分类名称已存在')
+          .fontSize(10)
+          .fontColor(Color.Red)
+          .margin({ top: 8 });
+      }
+
+      Row() {
+        Button({ type: ButtonType.Capsule, stateEffect: false }) {
+          Text('取消')
+            .fontSize(14)
+            .fontColor('#EBAC24');
+        }
+        .padding(8)
+        .width('50%')
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          try {
+            this.uiContext.getPromptAction().closeCustomDialog(this.createCategoryDialogId);
+          } catch (error) {
+            console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+          }
+        });
+
+        Divider()
+          .height(24)
+          .vertical(true)
+          .strokeWidth(1)
+          .color('#DCDCDC');
+
+        Button({ type: ButtonType.Capsule, stateEffect: false }) {
+          Text('保存')
+            .fontSize(14)
+            .fontColor('#EBAC24')
+            .opacity(this.newCategoryName ? 1 : 0.3);
+        }
+        .padding(8)
+        .width('50%')
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          if (!this.newCategoryName) {
+            return;
+          }
+
+          if (this.categoryService.isDuplicateCategory(this.newCategoryName)) {
+            this.newCategoryName = '';
+            this.duplicateCategoryName = true;
+            return;
+          }
+
+          if (this.isEditCategory) {
+            if (this.curEditCategory && this.kvStore) {
+              this.curEditCategory.name = this.newCategoryName;
+              this.categoryService.updateCategory(this.curEditCategory, this.kvStore);
+              if (this.curEditCategory.id === this.curUserCategory.id) {
+                this.curUserCategory.name = this.curEditCategory.name;
+              }
+            }
+          } else {
+            this.categoryService.addCategory(new UserCategory(this.newCategoryName, 0), this.kvStore!, this.uiContext);
+          }
+
+          try {
+            this.uiContext.getPromptAction().closeCustomDialog(this.createCategoryDialogId);
+          } catch (error) {
+            console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+          }
+        });
+      }
+      .width('100%')
+      .margin({ top: 16 })
+      .justifyContent(FlexAlign.SpaceBetween);
+    }
+    .padding(16);
+  }
+
+  @Builder
   showCategoryDialog() {
     Column() {
       Column() {
@@ -820,12 +940,55 @@ struct Index {
         Text(category.value.name)
           .fontSize(13)
           .fontWeight(600)
-          .fontColor($r('sys.color.font_primary'));
+          .fontColor($r('sys.color.font_primary'))
+          .opacity((this.isEditCategory && category.value.id === '-1') ? 0.3 : 1);
       };
 
-      Text(category.value.memoCount.toString())
-        .fontSize(13)
-        .fontColor($r('sys.color.font_secondary'));
+      if (!this.isEditCategory) {
+        Text(category.value.memoCount.toString())
+          .fontSize(13)
+          .fontColor($r('sys.color.font_secondary'));
+      } else if (category.value.id !== '-1') {
+        Row({ space: 16 }) {
+          // 删除按钮
+          Image($r('app.media.trash'))
+            .width(24)
+            .height(24)
+            .fillColor(Color.Gray)
+            .onClick(() => {
+              this.memoService.moveMemoCategory(category.value.id, this.kvStore!, this.uiContext);
+              this.categoryService.deleteCategoryById(category.value.id, this.kvStore!);
+            });
+
+          // 编辑按钮
+          Image($r('app.media.square_and_pencil'))
+            .width(24)
+            .height(24)
+            .fillColor(Color.Gray)
+            .onClick(() => {
+              this.duplicateCategoryName = false;
+              this.curEditCategory = category.value;
+              this.newCategoryName = category.value.name;
+              this.uiContext.getPromptAction()
+                .openCustomDialog({
+                  builder: () => {
+                    this.createCategoryDialog();
+                  },
+                  width: '90%',
+                  autoCancel: false,
+                  alignment: DialogAlignment.Center,
+                  transition: TransitionEffect.SLIDE,
+                })
+                .then((dialogId: number) => {
+                  this.createCategoryDialogId = dialogId;
+                })
+                .catch((error: BusinessError) => {
+                  console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+                });
+            });
+        }
+        .alignItems(VerticalAlign.Center);
+      }
     }
     .padding(8)
     .width('100%')
@@ -835,6 +998,10 @@ struct Index {
       !this.curSystemCategory && this.curUserCategory.id === category.value.id ? '#22EBAC24' : Color.Transparent
     )
     .onClick(() => {
+      if (this.isEditCategory) {
+        return;
+      }
+
       this.curSystemCategory = undefined;
       this.curUserCategory = category.value;
       this.getUIContext().animateTo(
@@ -887,10 +1054,14 @@ struct Index {
               .fontWeight(FontWeight.Bold)
               .fontColor($r('sys.color.font_secondary'));
 
-            Text('编辑')
+            Text(this.isEditCategory ? '取消' : '编辑')
               .fontSize(12)
               .fontColor('#EBAC24')
-              .fontWeight(FontWeight.Bold);
+              .fontWeight(FontWeight.Bold)
+              .onClick(() => {
+                this.isEditCategory = !this.isEditCategory;
+                this.curEditCategory = undefined;
+              });
           }
           .width('100%')
           .alignItems(VerticalAlign.Center)
@@ -908,11 +1079,35 @@ struct Index {
             Text('新建文件夹')
               .fontSize(13)
               .fontColor('#EBAC24')
-              .fontWeight(FontWeight.Bold);
+              .fontWeight(FontWeight.Bold)
+              .opacity(this.isEditCategory ? 0.3 : 1);
           }
           .width('100%')
           .margin({ top: 12 })
-          .justifyContent(FlexAlign.Center);
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            if (this.isEditCategory) {
+              return;
+            }
+            this.newCategoryName = '';
+            this.duplicateCategoryName = false;
+            this.uiContext.getPromptAction()
+              .openCustomDialog({
+                builder: () => {
+                  this.createCategoryDialog();
+                },
+                width: '90%',
+                autoCancel: false,
+                alignment: DialogAlignment.Center,
+                transition: TransitionEffect.SLIDE,
+              })
+              .then((dialogId: number) => {
+                this.createCategoryDialogId = dialogId;
+              })
+              .catch((error: BusinessError) => {
+                console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+              });
+          });
         }
         .width('100%');
       }

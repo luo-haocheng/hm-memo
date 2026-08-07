@@ -1,5 +1,5 @@
 import { KVStore, SerializeUtil } from 'serializer';
-import { UserCategory } from './Model';
+import { SystemCategory, UserCategory } from './Model';
 import { Memo } from 'memo_editor';
 
 /**
@@ -89,6 +89,12 @@ export class CategoryService {
     return this.categoryList[0];
   }
 
+  isDuplicateCategory(name: string) {
+    let dupWithSysCategory = Object.values(SystemCategory).some(item => item === name);
+    let dupWithUserCategory = this.categoryList.some(item => name === item.name);
+    return dupWithSysCategory || dupWithUserCategory;
+  }
+
   /**
    * 新增分类
    */
@@ -122,10 +128,10 @@ export class CategoryService {
     if (idx === -1) {
       return;
     }
+
     const target = this.categoryList[idx];
     this.categoryList.splice(idx, 1, new UserCategory(category.name, target.memoCount, target.id));
-    console.info(`Category List: ${JSON.stringify(this.categoryList)}`);
-    // target.name = category.name;
+
     kvStore.put(`Category_` + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
   }
 
@@ -149,22 +155,18 @@ export class CategoryService {
       return;
     }
 
-    if (originalCategoryId !== '-1') {
-      let originalCategory = this.getCategoryById(originalCategoryId);
-      if (originalCategory) {
-        originalCategory.memoCount--;
-        kvStore.put('Category_' + originalCategory.id, JSON.stringify(originalCategory).replace('/__ob_/g', ''));
-      }
+    let originalCategory = this.getCategoryById(originalCategoryId);
+    if (originalCategory) {
+      originalCategory.memoCount--;
+    } else {
+      return;
     }
 
     let targetCategory = this.getCategoryById(targetCategoryId);
     if (targetCategory) {
-      if (targetCategory.id !== '-1') {
-        targetCategory.memoCount++;
-        kvStore.put('Category_' + targetCategory.id, JSON.stringify(targetCategory).replace('/__ob_/g', ''));
-      }
+      targetCategory.memoCount++;
+    } else {
+      return;
     }
-
-    putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
   }
 }

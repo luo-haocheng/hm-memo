@@ -114,6 +114,7 @@ export class MemoService {
     this.memoList
       .filter(memo => memo.categoryId === categoryId)
       .forEach(memo => {
+        this.categoryService.moveCategory(memo, '-1', kvStore, uiContext);
         memo.categoryId = '-1';
         deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
         putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
