@@ -120,6 +120,18 @@ export class MemoService {
       });
   }
 
+  public collectMemo(memoId: string, isFavorite: boolean, kvStore?: KVStore, uiContext?: UIContext) {
+    const memo = this.memoList.find(item => item.id === memoId);
+    if (!memo) {
+      return;
+    }
+    memo.isFavorite = isFavorite;
+
+    if (kvStore && uiContext) {
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+    }
+  }
+
   /**
    * 删除笔记
    */

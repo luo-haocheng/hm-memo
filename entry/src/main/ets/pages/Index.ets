@@ -21,8 +21,9 @@ import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentB
 @ComponentV2
 struct Index {
   memoService: MemoService = MemoService.instance;
-  uiContext: UIContext = this.getUIContext() as UIContext;
   categoryService: CategoryService = CategoryService.instance;
+  scroller: ListScroller = new ListScroller();
+  uiContext: UIContext = this.getUIContext() as UIContext;
   segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
@@ -470,15 +471,16 @@ struct Index {
   }
 
   @Builder
-  cardItemEnd(memo: Memo) {
+  memoItemEnd(memo: Memo) {
     Row({ space: 8 }) {
+      // 移动备忘
       Image($r('app.media.arrow_right_folder_fill'))
         .width(40)
         .height(40)
         .padding(8)
         .borderRadius('50%')
         .fillColor(Color.White)
-        .backgroundColor(Color.Green)
+        .backgroundColor('#3498DB')
         .onClick(() => {
           const params: Record<string, Object> =
             {
@@ -490,8 +492,24 @@ struct Index {
               }
             };
           this.appPathStack.pushPathByName('CategoryEdit', params);
+          this.scroller.closeAllSwipeActions();
         });
 
+      // 收藏/取消收藏
+      Image(memo.isFavorite ? $r('app.media.star_fill') : $r('app.media.star'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor('#F1C40F')
+        .onClick(() => {
+          memo.isFavorite = !memo.isFavorite;
+          this.memoService.collectMemo(memo.id, memo.isFavorite, this.kvStore, this.uiContext);
+          this.scroller.closeAllSwipeActions();
+        });
+
+      // 删除备忘到回收站
       Image($r('app.media.trash_fill'))
         .width(40)
         .height(40)
@@ -508,9 +526,40 @@ struct Index {
   }
 
   @Builder
+  deleteMemoEnd(memo: Memo) {
+    Row({ space: 8 }) {
+      // 恢复按钮
+      Image($r('app.media.arrow_counterclockwise'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor('#3498DB')
+        .onClick(() => {
+          this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+        });
+
+      // 删除按钮
+      Image($r('app.media.trash'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor(Color.Red)
+        .onClick(() => {
+          this.memoService.deletePermanently(memo.id, this.kvStore);
+        });
+    }
+    .alignItems(VerticalAlign.Center)
+    .padding($r('sys.float.padding_level8'));
+  }
+
+  @Builder
   cardList() {
     Column() {
-      List({ space: 12 }) {
+      List({ space: 12, scroller: this.scroller }) {
         ListItem() {
           this.searchBar();
         };
@@ -524,7 +573,11 @@ struct Index {
             .swipeAction({
               end: {
                 builder: () => {
-                  this.cardItemEnd(item);
+                  if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                    this.deleteMemoEnd(item);
+                  } else {
+                    this.memoItemEnd(item);
+                  }
                 }
               }
             })
