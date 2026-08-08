@@ -1,19 +1,8 @@
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
-import { CategoryService, MemoService, SortEnum, SystemCategory, UserCategory } from 'data_source';
+import { CategoryService, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { DateUtil } from 'utils';
-import { DateConstants } from 'utils/src/main/ets/constants/DateConstants';
-import {
-  ShowMethod,
-  ShowMethodEnum,
-  showType,
-  sortData,
-  SortType,
-  ToolBar,
-  toolBarList,
-  ToolBarName,
-} from '../constants/HomeUIConstant';
+import { ToolBar, toolBarList, ToolBarName } from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 
@@ -23,28 +12,22 @@ struct Index {
   memoService: MemoService = MemoService.instance;
   categoryService: CategoryService = CategoryService.instance;
   createCategoryDialogId: number = 0;
-  scroller: ListScroller = new ListScroller();
+  cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
   segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
-  @Local isShowSideBar: boolean = false;
-  @Local isMultiChoice: boolean = false;
   @Local segBtnIndex: number = 0;
   @Local choiceCount: number = 0;
+  @Local isMultiChoice: boolean = false;
+  @Local isShowSideBar: boolean = false;
   @Local newCategoryName: string = '';
   @Local isEditCategory: boolean = false;
+  @Local isCardListScroll: boolean = false;
   @Local duplicateCategoryName: boolean = false;
   @Local curEditCategory?: UserCategory = undefined;
-  @Local searchKeyword: string = '';
-  @Local isSearching: boolean = false;
-  @Local openSortSheet: boolean = false;
-  @Local openCategorySheet: boolean = false;
-  @Local sortBy: SortEnum = SortEnum.CREATE_TIME;
-  @Local showListType: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local curSystemCategory?: SystemCategory = SystemCategory.ALL_MEMO;
   @Local curUserCategory: UserCategory = this.categoryService.getDefaultCategory();
-  @Local sections: WaterFlowSections = new WaterFlowSections();
 
   @Computed
   get currentMemoList() {
@@ -93,10 +76,6 @@ struct Index {
     await this.memoService.loadDeleteMemo(this.kvStore);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.currentMemoList);
-
-    // 设置瀑布流分组信息
-    this.sections.push({ itemsCount: 1, crossCount: 1 });
-    this.sections.push({ itemsCount: this.currentMemoList.length, crossCount: 2 });
   }
 
   currentHeader() {
@@ -109,32 +88,7 @@ struct Index {
 
   resetCategory(category: UserCategory) {
     this.curUserCategory = category;
-    this.openCategorySheet = false;
   }
-
-  // 搜索
-  onSearch(categoryId: string, keyword: string, sortBy: SortEnum): Memo[] {
-    this.searchKeyword = keyword.trim();
-    this.isSearching = this.searchKeyword.length > 0;
-    return this.memoService.getMemoList(categoryId, sortBy, this.searchKeyword);
-  }
-
-  // 排序确认方法
-  onSortConfirm(categoryId: string, sortBy: SortEnum, searchKeyword: string) {
-    this.sortBy = sortBy;
-    this.memoService.getMemoList(categoryId, this.sortBy, searchKeyword);
-    this.openSortSheet = false;
-  }
-
-  // 列表排序
-  sort = (type: SortEnum) => {
-    this.onSortConfirm(this.curUserCategory.id, type, '');
-  };
-  // 列表展开方式
-  toggleShowType = (userWaterFlow: ShowMethodEnum) => {
-    this.showListType = userWaterFlow;
-    this.openSortSheet = false;
-  };
 
   recoverInitState() {
     this.isMultiChoice = false;
@@ -259,7 +213,7 @@ struct Index {
           .fillColor($r('sys.color.font_primary'))
           .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
           .onClick(() => {
-            this.appPathStack.pushPathByName('MineView', undefined);
+            // todo
           });
       }
       .width('100%')
@@ -271,7 +225,7 @@ struct Index {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.font_primary'));
 
-        if (this.currentMemoList.length > 0) {
+        if (this.currentMemoList.length > 0 && !this.isCardListScroll) {
           Text(`${this.currentMemoList.length} 条备忘`)
             .fontSize(14)
             .fontWeight(FontWeight.Regular)
@@ -300,96 +254,37 @@ struct Index {
       .placeholderColor($r('sys.color.font_secondary'))
       .placeholderFont({ size: $r('sys.float.Body_M') })
       .backgroundColor($r('sys.color.comp_background_list_card'))
-      .onSubmit((value: string) => {
+      .onSubmit(() => {
         // todo
       })
-      .onChange((value: string) => {
+      .onChange(() => {
         // todo
       });
   }
 
   @Builder
-  editorMemoList() {
-    if (!this.isMultiChoice) {
-      Row() {
-        Row({ space: 4 }) {
-          Text(this.curUserCategory.name)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('sys.color.font_primary'));
-
-          SymbolGlyph($r('sys.symbol.arrowtriangle_down_fill'))
-            .fontColor([$r('sys.color.font_secondary')]);
-        }
-        .onClick(() => {
-          this.openCategorySheet = true;
-        })
-        .bindSheet(
-          $$this.openCategorySheet,
-          this.showCategoryDialog(),
-          {
-            height: 400,
-            width: '100%',
-            title: { title: '笔记分类' },
-            radius: { topLeft: 16, topRight: 16 },
-          }
-        );
-
-        Blank();
-
-        Image($r('app.media.icon_more'))
-          .width(20)
-          .height(20)
-          .onClick(() => {
-            this.openSortSheet = true;
-          })
-          .bindSheet(
-            $$this.openSortSheet,
-            this.sortSheet(),
-            {
-              height: 376,
-              width: '100%',
-              showClose: false,
-              radius: { topLeft: 16, topRight: 16 },
-            }
-          );
-      }
-      .width('100%')
-      .padding({
-        left: $r('sys.float.padding_level8'),
-        right: $r('sys.float.padding_level8'),
-        top: 12,
-        bottom: 12,
-      });
-    }
-  }
-
-  @Builder
-  addMemoBuilder() {
+  addMemoButton() {
     if (
       !this.isMultiChoice &&
         this.curSystemCategory !== SystemCategory.LOCKED_MEMO &&
         this.curSystemCategory !== SystemCategory.DELETE_MEMO
     ) {
-      Row() {
-        SymbolGlyph($r('sys.symbol.plus'))
-          .padding(8)
-          .fontSize(35)
-          .fontColor([Color.White])
-          .borderRadius('50%')
-          .backgroundColor('#EBAC24')
-          .onClick(() => {
-            const params: Record<string, Object> = {
-              'memoId': '',
-              'userCategory': this.curUserCategory,
-              'systemCategory': this.curSystemCategory ?? '',
-            };
-            this.appPathStack.pushPathByName('MemoEdit', params);
-          });
-      }
-      .width('100%')
-      .position({ bottom: 40 })
-      .justifyContent(FlexAlign.Center);
+      SymbolGlyph($r('sys.symbol.plus'))
+        .padding(8)
+        .fontSize(35)
+        .fontColor([Color.White])
+        .borderRadius('50%')
+        .backgroundColor('#EBAC24')
+        .translate({ x: '-50%' })
+        .position({ bottom: 40, left: '50%' })
+        .onClick(() => {
+          const params: Record<string, Object> = {
+            'memoId': '',
+            'userCategory': this.curUserCategory,
+            'systemCategory': this.curSystemCategory ?? '',
+          };
+          this.appPathStack.pushPathByName('MemoEdit', params);
+        });
     }
   }
 
@@ -431,7 +326,7 @@ struct Index {
       Column({ space: 12 }) {
         Text(item.title)
           .maxLines(1)
-          .fontSize(18)
+          .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .textOverflow({ overflow: TextOverflow.Ellipsis });
@@ -444,9 +339,9 @@ struct Index {
           .fontColor($r('sys.color.font_secondary'))
           .textOverflow({ overflow: TextOverflow.Ellipsis });
 
-        Text(DateUtil.getFormatDateStr(item.createTime, DateConstants.DATE_FORMAT4))
-          .fontSize(12)
-          .fontColor($r('sys.color.font_tertiary'));
+        // Text(DateUtil.getFormatDateStr(item.createTime, DateConstants.DATE_FORMAT4))
+        //   .fontSize(12)
+        //   .fontColor($r('sys.color.font_tertiary'));
       }
       .padding(12)
       .width('100%')
@@ -495,8 +390,14 @@ struct Index {
                 this.resetCategory(this.curUserCategory);
               }
             };
+
           this.appPathStack.pushPathByName('CategoryEdit', params);
-          this.scroller.closeAllSwipeActions();
+
+          try {
+            this.cardListScroller.closeAllSwipeActions();
+          } catch (error) {
+            console.error(`Failed to invoke closeAllSwipeActions. Cause: ${JSON.stringify(error)}`);
+          }
         });
 
       // 收藏/取消收藏
@@ -510,7 +411,12 @@ struct Index {
         .onClick(() => {
           memo.isFavorite = !memo.isFavorite;
           this.memoService.collectMemo(memo.id, memo.isFavorite, this.kvStore, this.uiContext);
-          this.scroller.closeAllSwipeActions();
+
+          try {
+            this.cardListScroller.closeAllSwipeActions();
+          } catch (error) {
+            console.error(`Failed to invoke closeAllSwipeActions. Cause: ${JSON.stringify(error)}`);
+          }
         });
 
       // 删除备忘到回收站
@@ -563,7 +469,7 @@ struct Index {
   @Builder
   cardList() {
     Column() {
-      List({ space: 12, scroller: this.scroller }) {
+      List({ space: 12, scroller: this.cardListScroller }) {
         ListItem() {
           this.searchBar();
         };
@@ -595,43 +501,35 @@ struct Index {
           (item: Memo) => JSON.stringify(item),
         );
       }
-      .scrollBar(BarState.Off)
-      .contentEndOffset(96);
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .margin({ bottom: 10 })
-    .padding({
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-    });
-  }
-
-  @Builder
-  waterCardList() {
-    Column() {
-      WaterFlow({ sections: this.sections }) {
-        FlowItem() {
-          this.searchBar();
-        };
-
-        ForEach(
-          this.currentMemoList,
-          (item: Memo) => {
-            FlowItem() {
-              this.cardItem(item, 9);
-            }
-            .width('100%');
-          },
-          (item: Memo) => JSON.stringify(item),
-        );
-      }
       .width('100%')
       .height('100%')
-      .rowsGap(16)
-      .cachedCount(1)
-      .columnsTemplate('1fr 1fr')
-      .columnsGap($r('sys.float.padding_level8'));
+      .contentEndOffset(96)
+      .scrollBar(BarState.Off)
+      .onDidScroll(() => {
+        const yOffset = this.cardListScroller.currentOffset().yOffset;
+        if (yOffset > 20 && !this.isCardListScroll) {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.EaseOut,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.isCardListScroll = true;
+            });
+        }
+      })
+      .onReachStart(() => {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = false;
+          });
+      });
     }
     .width('100%')
     .layoutWeight(1)
@@ -660,39 +558,16 @@ struct Index {
   }
 
   @Builder
-  searchNoResult() {
-    Column() {
-      this.searchBar();
-
-      Text('没有匹配的备忘')
-        .fontSize(16)
-        .fontColor($r('sys.color.font_tertiary'));
-    }
-    .height(100)
-    .width('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .padding({
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-    });
-  }
-
-  @Builder
   showMemoList() {
-    if (this.isSearching && this.currentMemoList.length === 0) {
-      this.searchNoResult();
-    } else if (!this.isSearching && this.currentMemoList.length === 0) {
+    if (this.currentMemoList.length === 0) {
       this.emptyMemos();
-    } else if (this.showListType === ShowMethodEnum.LIST) {
-      this.cardList();
     } else {
-      this.waterCardList();
+      this.cardList();
     }
   }
 
   @Builder
-  createCategoryDialog() {
+  createEditCategoryDialog() {
     Column() {
       Row() {
         Text(this.isEditCategory ? '编辑文件夹' : '新建文件夹')
@@ -808,89 +683,6 @@ struct Index {
   }
 
   @Builder
-  showCategoryDialog() {
-    Column() {
-      Column() {
-        List() {
-          ForEach(
-            this.categoryService.getCategoryList(),
-            (category: UserCategory, index: number) => {
-              ListItem() {
-                Column() {
-                  if (index !== 0) {
-                    Divider()
-                      .color($r('sys.color.comp_divider'));
-                  }
-
-                  Row() {
-                    Text(category.name)
-                      .fontSize(16)
-                      .fontColor(this.curUserCategory.id === category.id ?
-                        $r('sys.color.font_primary') : $r('sys.color.font_secondary'))
-                      .fontWeight(this.curUserCategory.id === category.id ? FontWeight.Medium : FontWeight.Regular);
-
-                    Blank();
-
-                    Text(String(category.memoCount))
-                      .fontSize(16);
-                  }
-                  .height(50)
-                  .width('100%');
-                };
-              }
-              .padding({ left: 12, right: 12 })
-              .backgroundColor($r('sys.color.comp_background_list_card'))
-              .onClick(() => {
-                this.resetCategory(category);
-              });
-            },
-            (category: UserCategory) => JSON.stringify(category),
-          );
-        }
-        .borderRadius(8)
-        .scrollBar(BarState.Off)
-        .edgeEffect(EdgeEffect.None);
-      }
-      .height(250);
-
-      Blank();
-
-      Button() {
-        Row() {
-          Text('前往笔记分类')
-            .fontWeight(FontWeight.Medium)
-            .fontSize($r('sys.float.Body_L'))
-            .fontColor($r('sys.color.font_on_primary'));
-
-          SymbolGlyph($r('sys.symbol.chevron_right'))
-            .fontSize(18)
-            .fontColor([Color.White])
-            .fontWeight(FontWeight.Medium)
-            .padding({ left: 12 });
-        };
-      }
-      .height(40)
-      .width('100%')
-      .margin({ bottom: 30 })
-      .backgroundColor('#FFAA00')
-      .onClick(() => {
-        this.openCategorySheet = false;
-        if (this.curUserCategory) {
-          const params: Record<string, Object | undefined> =
-            { 'isEditCategory': true, 'curUserCategory': this.curUserCategory };
-          this.appPathStack.pushPathByName('CategoryEdit', params);
-        }
-      });
-    }
-    .height(344)
-    .margin({
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-    })
-    .backgroundColor($r('sys.color.background_secondary'));
-  }
-
-  @Builder
   systemCategoryBuilder(icon: Resource, category: SystemCategory, count: Binding<number>) {
     Row() {
       Row({ space: 16 }) {
@@ -972,7 +764,7 @@ struct Index {
               this.uiContext.getPromptAction()
                 .openCustomDialog({
                   builder: () => {
-                    this.createCategoryDialog();
+                    this.createEditCategoryDialog();
                   },
                   width: '90%',
                   autoCancel: false,
@@ -1094,7 +886,7 @@ struct Index {
             this.uiContext.getPromptAction()
               .openCustomDialog({
                 builder: () => {
-                  this.createCategoryDialog();
+                  this.createEditCategoryDialog();
                 },
                 width: '90%',
                 autoCancel: false,
@@ -1118,68 +910,6 @@ struct Index {
     .scrollBar(BarState.Off);
   }
 
-  @Builder
-  sheetCard(title: string, data: SortType[] | ShowMethod[], callback: Function, group: string) {
-    Column() {
-      Text(title)
-        .width('100%')
-        .margin({ bottom: 16 })
-        .fontSize(20)
-        .textAlign(TextAlign.Start)
-        .fontWeight(FontWeight.Medium);
-
-      List({ space: 24 }) {
-        ForEach(
-          data,
-          (item: SortType | ShowMethod) => {
-            ListItem() {
-              Row() {
-                Text(item.name)
-                  .fontSize(16)
-                  .fontColor($r('sys.color.font_primary'));
-
-                Blank();
-
-                Radio({ value: item.type, group: group })
-                  .checked(this.sortBy === item.type || this.showListType === item.type)
-                  .onChange((isChecked: boolean) => {
-                    if (isChecked) {
-                      callback(item.type);
-                    }
-                  });
-              }
-              .width('100%')
-              .padding({ left: 12, right: 12 })
-              .onClick(() => {
-                callback(item.type);
-              });
-            };
-          },
-          (item: SortType | ShowMethod) => JSON.stringify(item),
-        );
-      }
-      .borderRadius(8)
-      .padding({ top: 16, bottom: 16 })
-      .backgroundColor($r('sys.color.comp_background_list_card'))
-      .divider({ strokeWidth: 1, startMargin: 12, endMargin: 12 });
-    }
-    .width('100%')
-    .backgroundColor($r('sys.color.background_secondary'))
-    .padding({
-      top: 20,
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
-    });
-  }
-
-  @Builder
-  sortSheet() {
-    Column() {
-      this.sheetCard('展示形式', showType, this.toggleShowType, 'showType');
-      this.sheetCard('排序方式', sortData, this.sort, 'sortGroup');
-    };
-  }
-
   build() {
     Navigation(this.appPathStack) {
       Stack({ alignContent: Alignment.TopStart }) {
@@ -1201,9 +931,6 @@ struct Index {
               // 顶部栏
               this.headerArea();
 
-              // 工具栏
-              this.editorMemoList();
-
               // 备忘列表
               this.showMemoList();
 
@@ -1211,7 +938,7 @@ struct Index {
               this.toolBarBuilder();
 
               // 新增备忘按钮
-              this.addMemoBuilder();
+              this.addMemoButton();
             }
             .width('100%')
             .height('100%')
