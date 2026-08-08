@@ -90,15 +90,13 @@ export class MemoService {
     }
     // 从删除备忘列表移动到有效备忘列表
     const memo = this.dumpsters[index];
+    memo.categoryId = '-1';
     this.dumpsters.splice(index, 1);
     this.memoList.push(memo);
     // 更新分类计数
     const category = this.categoryService.getCategoryById(memo.categoryId);
     if (category) {
       category.memoCount++;
-      if (category.id !== '-1') {
-        this.categoryService.getCategoryList()[0].memoCount++;
-      }
     }
     // 持久化
     if (kvStore && uiContext) {

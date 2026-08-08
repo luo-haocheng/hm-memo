@@ -2,7 +2,7 @@ import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
 import { CategoryService, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { SegBtnItems, ToolBar, toolBarList, ToolBarName } from '../constants/HomeUIConstant';
+import { SegBtnItems, ToolBar, ToolBarList, ToolBarName } from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 @Entry
@@ -99,6 +99,7 @@ struct Index {
   // 备忘长按事件
   handleLongPress(item: Memo) {
     if (!this.isMultiChoice) {
+      this.currentMemoList.forEach(memo => memo.isSelected = false);
       this.isMultiChoice = true;
       item.isSelected = true;
       this.choiceCount = 1;
@@ -135,35 +136,46 @@ struct Index {
       return;
     }
 
-    const choiceMemoArr = this.getChoiceMemo();
-    if (choiceMemoArr.length === 0) {
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          duration: 1500,
-          message: '还未选中任何备忘',
-          alignment: Alignment.Center,
-        });
-      } catch (error) {
-        console.error(`Failed to showToast. Cause: ${JSON.stringify(error)}`);
-      }
+    const choiceMemos = this.getChoiceMemo();
+    if (choiceMemos.length === 0) {
       return;
     }
 
-    if (name === ToolBarName.MOVE_CATEGORY) {
-      const params: Record<string, Object> =
-        {
-          'isEditCategory': false,
-          'memoList': choiceMemoArr,
-          'curUserCategory': this.curUserCategory,
-          'resetCategory': () => {
-            this.resetCategory(this.curUserCategory);
+    if (name === ToolBarName.MOVE) {
+      this.moveMemoList = choiceMemos;
+      this.isMoveToNewCategory = false;
+      this.newCategoryName = '';
+      this.duplicateCategoryName = false;
+      this.uiContext.getPromptAction()
+        .openCustomDialog({
+          builder: () => {
+            this.moveToCategoryDialog();
+          },
+          width: '100%',
+          alignment: DialogAlignment.Bottom,
+          transition: TransitionEffect.SLIDE,
+          offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+          onDidDisappear: () => {
+            this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
           }
-        };
-      this.appPathStack.pushPathByName('CategoryEdit', params);
+        })
+        .then((dialogId: number) => {
+          this.moveToCategoryDialogId = dialogId;
+        })
+        .catch((error: BusinessError) => {
+          console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+        });
+
+      try {
+        this.cardListScroller.closeAllSwipeActions();
+      } catch (error) {
+        console.error(`Failed to invoke closeAllSwipeActions. Cause: ${JSON.stringify(error)}`);
+      }
     } else if (name === ToolBarName.DELETE) {
-      choiceMemoArr.forEach((memo) => {
+      choiceMemos.forEach((memo) => {
         this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
       });
+      this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
     }
   }
 
@@ -198,12 +210,12 @@ struct Index {
           TabSegmentButtonV2({
             items: SegBtnItems,
             selectedIndex: this.segBtnIndex!!,
-            enableStateAnimation: true,
             itemFontSize: LengthMetrics.vp(12),
             itemSelectedFontSize: LengthMetrics.vp(12),
             itemSelectedFontColor: ColorMetrics.numeric(0xEBAC24),
             buttonMinHeight: LengthMetrics.vp(36),
             buttonBackgroundColor: ColorMetrics.resourceColor($r('sys.color.comp_background_list_card')),
+            enableStateAnimation: true,
           })
             .width(120)
             .height(36);
@@ -212,29 +224,28 @@ struct Index {
         Image($r('app.media.more_option'))
           .headerButtonStyle()
           .fillColor($r('sys.color.font_primary'))
-          .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
-          .onClick(() => {
-            // todo
-          });
+          .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible);
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween);
 
-      Column({ space: 5 }) {
-        Text(this.currentHeader())
-          .fontSize(30)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('sys.color.font_primary'));
+      if (!this.isMultiChoice) {
+        Column({ space: 5 }) {
+          Text(this.currentHeader())
+            .fontSize(30)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('sys.color.font_primary'));
 
-        if (this.currentMemoList.length > 0 && !this.isCardListScroll) {
-          Text(`${this.currentMemoList.length} 条备忘`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Regular)
-            .fontColor($r('sys.color.font_secondary'));
+          if (this.currentMemoList.length > 0 && !this.isCardListScroll) {
+            Text(`${this.currentMemoList.length} 条备忘`)
+              .fontSize(14)
+              .fontWeight(FontWeight.Regular)
+              .fontColor($r('sys.color.font_secondary'));
+          }
         }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start);
       }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start);
     }
     .width('100%')
     .justifyContent(FlexAlign.Start)
@@ -248,19 +259,15 @@ struct Index {
 
   @Builder
   searchBar() {
-    Search({ placeholder: '搜索' })
-      .margin({ bottom: 0 })
-      .fontColor($r('sys.color.font_primary'))
-      .textFont({ size: $r('sys.float.Body_M') })
-      .placeholderColor($r('sys.color.font_secondary'))
-      .placeholderFont({ size: $r('sys.float.Body_M') })
-      .backgroundColor($r('sys.color.comp_background_list_card'))
-      .onSubmit(() => {
-        // todo
-      })
-      .onChange(() => {
-        // todo
-      });
+    if (!this.isMultiChoice) {
+      Search({ placeholder: '搜索' })
+        .margin({ bottom: 0 })
+        .fontColor($r('sys.color.font_primary'))
+        .textFont({ size: $r('sys.float.Body_M') })
+        .placeholderColor($r('sys.color.font_secondary'))
+        .placeholderFont({ size: $r('sys.float.Body_M') })
+        .backgroundColor($r('sys.color.comp_background_list_card'));
+    }
   }
 
   @Builder
@@ -294,16 +301,18 @@ struct Index {
     if (this.isMultiChoice) {
       Row() {
         ForEach(
-          toolBarList,
+          ToolBarList,
           (item: ToolBar) => {
             Column({ space: 5 }) {
               Image(item.icon)
                 .width(24)
-                .height(24);
+                .height(24)
+                .fillColor($r('sys.color.font_primary'));
 
               Text(item.name)
                 .fontSize(10)
-                .fontColor($r('sys.color.font_secondary'));
+                .fontWeight(600)
+                .fontColor($r('sys.color.font_primary'));
             }
             .onClick(() => {
               this.handleToolBarClick(item.name);
@@ -312,59 +321,61 @@ struct Index {
           (item: ToolBar) => JSON.stringify(item)
         );
       }
-      .height(70)
-      .width('100%')
-      .margin({ top: 10 })
-      .padding({ bottom: 10 })
+      .width('70%')
+      .borderRadius('50%')
+      .padding({ top: 8, bottom: 8 })
       .justifyContent(FlexAlign.SpaceAround)
-      .backgroundColor($r('sys.color.comp_background_list_card'));
+      .backgroundColor($r('sys.color.comp_background_list_card'))
+      .translate({ x: '-50%' })
+      .position({ left: '50%', bottom: AppStorage.get('BottomRectHeight') as number });
     }
   }
 
   @Builder
-  cardItem(item: Memo, maxLines: number) {
-    Stack({ alignContent: Alignment.TopEnd }) {
+  cardItem(memo: Binding<Memo>) {
+    Row() {
       Column({ space: 12 }) {
-        Text(item.title)
+        Text(memo.value.title)
           .maxLines(1)
           .fontSize(16)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('sys.color.font_primary'))
           .textOverflow({ overflow: TextOverflow.Ellipsis });
 
-        Text(item.description)
+        Text(memo.value.description)
+          .maxLines(1)
           .fontSize(14)
           .lineHeight(21)
-          .maxLines(maxLines)
           .fontWeight(FontWeight.Regular)
           .fontColor($r('sys.color.font_secondary'))
           .textOverflow({ overflow: TextOverflow.Ellipsis });
-
-        // Text(DateUtil.getFormatDateStr(item.createTime, DateConstants.DATE_FORMAT4))
-        //   .fontSize(12)
-        //   .fontColor($r('sys.color.font_tertiary'));
       }
-      .padding(12)
       .width('100%')
-      .borderRadius(16)
       .alignItems(HorizontalAlign.Start)
-      .backgroundColor($r('sys.color.comp_background_list_card'));
+      .layoutWeight(1);
 
       if (this.isMultiChoice) {
-        Image(item.isSelected ? $r('app.media.selected') : $r('app.media.unselected'))
-          .width(35)
-          .height(35)
-          .padding({ top: 10, right: 10 });
+        Checkbox()
+          .width(20)
+          .height(20)
+          .selectedColor('#EBAC24')
+          .select(memo.value.isSelected!!)
+          .onChange(() => {
+            this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
+          });
       }
     }
+    .padding(12)
+    .width('100%')
+    .borderRadius(16)
+    .alignItems(VerticalAlign.Center)
+    .justifyContent(FlexAlign.SpaceBetween)
+    .backgroundColor($r('sys.color.comp_background_list_card'))
     .onClick(() => {
       if (this.isMultiChoice) {
-        item.isSelected = !item.isSelected;
-        let choiceCount = 0;
-        this.currentMemoList.forEach(memo => choiceCount += memo.isSelected ? 1 : 0);
-        this.choiceCount = choiceCount;
+        memo.value.isSelected = !memo.value.isSelected;
       } else {
-        const params: Record<string, Object> = { 'memoId': item.id, 'curUserCategory': this.curUserCategory };
+        const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
       }
     });
@@ -486,17 +497,17 @@ struct Index {
 
         ForEach(
           this.currentMemoList,
-          (item: Memo) => {
+          (memo: Memo) => {
             ListItem() {
-              this.cardItem(item, 1);
+              this.cardItem(UIUtils.makeBinding(() => memo));
             }
             .swipeAction({
               end: {
                 builder: () => {
                   if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                    this.deleteMemoEnd(item);
+                    this.deleteMemoEnd(memo);
                   } else {
-                    this.memoItemEnd(item);
+                    this.memoItemEnd(memo);
                   }
                 }
               }
@@ -504,7 +515,7 @@ struct Index {
             .gesture(
               LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
                 .onAction(() => {
-                  this.handleLongPress(item);
+                  this.handleLongPress(memo);
                 })
             );
           },
