@@ -4,11 +4,6 @@
       "name": "MemoEdit",
       "buildFunction": "MemoEditBuilder",
       "pageSourceFile": "src/main/ets/pages/MemoEditView.ets"
-    },
-    {
-      "name": "CategoryEdit",
-      "buildFunction": "EditCategoryBuilder",
-      "pageSourceFile": "src/main/ets/pages/EditCategory.ets"
     }
   ]
 }

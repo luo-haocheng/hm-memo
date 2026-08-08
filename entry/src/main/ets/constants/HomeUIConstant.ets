@@ -1,4 +1,7 @@
 import { SortEnum } from 'data_source';
+import { SegmentButtonV2Items } from '@kit.ArkUI';
+
+export const SegBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
 
 export enum ToolBarName {
   MOVE_CATEGORY = '移动到分类',

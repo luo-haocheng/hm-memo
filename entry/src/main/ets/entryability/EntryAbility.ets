@@ -27,11 +27,15 @@ export default class EntryAbility extends UIAbility {
         });
 
       const topAvoidArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+      const bottomAvoidArea = windowClass.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
       AppStorage.setOrCreate('TopRectHeight', windowClass.getUIContext().px2vp(topAvoidArea.topRect.height));
+      AppStorage.setOrCreate('BottomRectHeight', windowClass.getUIContext().px2vp(bottomAvoidArea.bottomRect.height));
 
       windowClass.on('avoidAreaChange', (data) => {
         if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
           AppStorage.setOrCreate('TopRectHeight', windowClass.getUIContext().px2vp(data.area.topRect.height));
+        } else if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          AppStorage.setOrCreate('BottomRectHeight', windowClass.getUIContext().px2vp(data.area.bottomRect.height));
         }
       });
     } catch (error) {

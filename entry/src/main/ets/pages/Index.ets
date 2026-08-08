@@ -2,19 +2,18 @@ import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
 import { CategoryService, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { ToolBar, toolBarList, ToolBarName } from '../constants/HomeUIConstant';
-import { Binding, ColorMetrics, LengthMetrics, SegmentButtonV2Items, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
-
+import { SegBtnItems, ToolBar, toolBarList, ToolBarName } from '../constants/HomeUIConstant';
+import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 @Entry
 @ComponentV2
 struct Index {
   memoService: MemoService = MemoService.instance;
   categoryService: CategoryService = CategoryService.instance;
-  createCategoryDialogId: number = 0;
+  moveToCategoryDialogId: number = 0;
+  createEditCategoryDialogId: number = 0;
   cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
-  segBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local segBtnIndex: number = 0;
@@ -25,6 +24,8 @@ struct Index {
   @Local isEditCategory: boolean = false;
   @Local isCardListScroll: boolean = false;
   @Local duplicateCategoryName: boolean = false;
+  @Local moveMemoList: Array<Memo> = [];
+  @Local isMoveToNewCategory: boolean = false;
   @Local curEditCategory?: UserCategory = undefined;
   @Local curSystemCategory?: SystemCategory = SystemCategory.ALL_MEMO;
   @Local curUserCategory: UserCategory = this.categoryService.getDefaultCategory();
@@ -195,7 +196,7 @@ struct Index {
             .fontColor($r('sys.color.font_primary'));
         } else {
           TabSegmentButtonV2({
-            items: this.segBtnItems,
+            items: SegBtnItems,
             selectedIndex: this.segBtnIndex!!,
             enableStateAnimation: true,
             itemFontSize: LengthMetrics.vp(12),
@@ -381,17 +382,26 @@ struct Index {
         .fillColor(Color.White)
         .backgroundColor('#3498DB')
         .onClick(() => {
-          const params: Record<string, Object> =
-            {
-              'isEditCategory': false,
-              'curUserCategory': this.curUserCategory,
-              'memoList': [memo],
-              'resetCategory': () => {
-                this.resetCategory(this.curUserCategory);
-              }
-            };
-
-          this.appPathStack.pushPathByName('CategoryEdit', params);
+          this.moveMemoList = [memo];
+          this.isMoveToNewCategory = false;
+          this.newCategoryName = '';
+          this.duplicateCategoryName = false;
+          this.uiContext.getPromptAction()
+            .openCustomDialog({
+              builder: () => {
+                this.moveToCategoryDialog();
+              },
+              width: '100%',
+              alignment: DialogAlignment.Bottom,
+              transition: TransitionEffect.SLIDE,
+              offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+            })
+            .then((dialogId: number) => {
+              this.moveToCategoryDialogId = dialogId;
+            })
+            .catch((error: BusinessError) => {
+              console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+            });
 
           try {
             this.cardListScroller.closeAllSwipeActions();
@@ -624,7 +634,7 @@ struct Index {
         .backgroundColor(Color.Transparent)
         .onClick(() => {
           try {
-            this.uiContext.getPromptAction().closeCustomDialog(this.createCategoryDialogId);
+            this.uiContext.getPromptAction().closeCustomDialog(this.createEditCategoryDialogId);
           } catch (error) {
             console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
           }
@@ -669,7 +679,7 @@ struct Index {
           }
 
           try {
-            this.uiContext.getPromptAction().closeCustomDialog(this.createCategoryDialogId);
+            this.uiContext.getPromptAction().closeCustomDialog(this.createEditCategoryDialogId);
           } catch (error) {
             console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
           }
@@ -683,7 +693,227 @@ struct Index {
   }
 
   @Builder
-  systemCategoryBuilder(icon: Resource, category: SystemCategory, count: Binding<number>) {
+  moveCategoryItem(category: Binding<UserCategory>) {
+    Column() {
+      Button() {
+        Row() {
+          Row({ space: 8 }) {
+            Image($r('app.media.folder'))
+              .width(24)
+              .height(24)
+              .fillColor('#EBAC24');
+
+            Text(category.value.name)
+              .fontSize(13)
+              .fontWeight(600)
+              .fontColor($r('sys.color.font_primary'));
+          };
+
+          if (!this.moveMemoList.some(memo => memo.categoryId !== category.value.id)) {
+            Checkbox()
+              .width(18)
+              .height(18)
+              .select(true)
+              .selectedColor('#EBAC24')
+              .hitTestBehavior(HitTestMode.None);
+          }
+        }
+        .width('100%')
+        .borderRadius(12)
+        .padding({ left: 8, right: 8 })
+        .justifyContent(FlexAlign.SpaceBetween);
+      }
+      .padding({ top: 12, bottom: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        // 移动目录
+        this.moveMemoList
+          .filter((memo) => memo.categoryId !== category.value.id)
+          .forEach((memo) => {
+            this.categoryService.moveCategory(memo, category.value.id);
+
+            memo.categoryId = category.value.id;
+            this.memoService.updateMemo(memo, this.kvStore, this.uiContext);
+          });
+        // 关闭弹窗
+        try {
+          this.uiContext.getPromptAction().closeCustomDialog(this.moveToCategoryDialogId);
+        } catch (error) {
+          console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+        }
+      });
+
+      Divider()
+        .width('100%')
+        .strokeWidth(1)
+        .margin({ left: 32 })
+        .color($r('sys.color.ohos_id_divider_color'));
+    }
+    .width('100%');
+  }
+
+  @Builder
+  moveToCategoryDialog() {
+    Column({ space: 12 }) {
+      Row() {
+        Text('选择文件夹')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.font_primary'));
+
+        Image($r('app.media.xmark'))
+          .width(40)
+          .height(40)
+          .padding(10)
+          .borderRadius('50%')
+          .fillColor($r('sys.color.font_primary'))
+          .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
+          .onClick(() => {
+            // 关闭弹窗
+            try {
+              this.uiContext.getPromptAction().closeCustomDialog(this.moveToCategoryDialogId);
+            } catch (error) {
+              console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+            }
+          });
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Scroll() {
+        Column() {
+          ForEach(
+            this.categoryService.getCategoryList(),
+            (category: UserCategory) => {
+              ListItem() {
+                this.moveCategoryItem(UIUtils.makeBinding(() => category));
+              };
+            },
+            (category: UserCategory) => JSON.stringify(category),
+          );
+
+          if (!this.isMoveToNewCategory) {
+            Row() {
+              Text('新建文件夹')
+                .fontSize(13)
+                .fontColor('#EBAC24')
+                .fontWeight(FontWeight.Bold)
+                .onClick(() => {
+                  this.isMoveToNewCategory = true;
+                });
+            }
+            .width('100%')
+            .margin({ top: 24 })
+            .justifyContent(FlexAlign.Center);
+          } else {
+            Column() {
+              Row() {
+                Image($r('app.media.xmark'))
+                  .width(40)
+                  .height(40)
+                  .padding(10)
+                  .borderRadius('50%')
+                  .fillColor($r('sys.color.font_primary'))
+                  .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
+                  .layoutWeight(0)
+                  .onClick(() => {
+                    this.isMoveToNewCategory = false;
+                  });
+
+                Row() {
+                  Image($r('app.media.folder'))
+                    .width(24)
+                    .height(24)
+                    .fillColor('#EBAC24')
+                    .layoutWeight(0);
+
+                  TextInput({
+                    placeholder: '名称',
+                    text: $$this.newCategoryName,
+                  })
+                    .padding(8)
+                    .fontSize(14)
+                    .maxLength(100)
+                    .showUnderline(true)
+                    .underlineColor(Color.Gray)
+                    .placeholderFont({ size: 14 })
+                    .backgroundColor(Color.Transparent)
+                    .layoutWeight(1)
+                    .onDidInsert(() => {
+                      this.duplicateCategoryName = false;
+                    });
+
+                }
+                .margin({ left: 8, right: 8 })
+                .layoutWeight(1);
+
+
+                Image($r('app.media.checkmark'))
+                  .width(40)
+                  .height(40)
+                  .padding(10)
+                  .borderRadius('50%')
+                  .opacity(this.newCategoryName ? 1 : 0.3)
+                  .fillColor($r('sys.color.font_primary'))
+                  .backgroundColor($r('sys.color.ohos_id_color_button_normal'))
+                  .layoutWeight(0)
+                  .onClick(() => {
+                    if (!this.newCategoryName) {
+                      return;
+                    }
+                    // 分类名称是否重复
+                    if (this.categoryService.isDuplicateCategory(this.newCategoryName)) {
+                      this.newCategoryName = '';
+                      this.duplicateCategoryName = true;
+                      return;
+                    }
+                    // 新建分类
+                    const newCategory = new UserCategory(this.newCategoryName, 0);
+                    this.categoryService.addCategory(newCategory, this.kvStore!, this.uiContext);
+                    // 移动到新建分类
+                    this.moveMemoList
+                      .forEach((memo) => {
+                        this.categoryService.moveCategory(memo, newCategory.id);
+
+                        memo.categoryId = newCategory.id;
+                        this.memoService.updateMemo(memo, this.kvStore, this.uiContext);
+                      });
+                    // 关闭弹窗
+                    try {
+                      this.uiContext.getPromptAction().closeCustomDialog(this.moveToCategoryDialogId);
+                    } catch (error) {
+                      console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+                    }
+                  });
+              }
+              .width('100%')
+              .margin({ top: 24 })
+              .justifyContent(FlexAlign.SpaceBetween);
+
+              if (this.duplicateCategoryName) {
+                Text('文件夹分类名称已存在')
+                  .fontSize(10)
+                  .fontColor(Color.Red)
+                  .margin({ top: 8 });
+              }
+            }
+            .alignItems(HorizontalAlign.Center);
+          }
+        }
+        .width('100%');
+      }
+      .width('100%')
+      .align(Alignment.Top)
+      .scrollBar(BarState.Off);
+    }
+    .padding(16)
+    .width('100%')
+    .height('100%');
+  }
+
+  @Builder
+  systemCategoryItem(icon: Resource, category: SystemCategory, count: Binding<number>) {
     Row() {
       Row({ space: 16 }) {
         Image(icon)
@@ -721,7 +951,7 @@ struct Index {
   }
 
   @Builder
-  userCategoryBuilder(category: Binding<UserCategory>) {
+  userCategoryItem(category: Binding<UserCategory>) {
     Row() {
       Row({ space: 8 }) {
         Image($r('app.media.folder'))
@@ -748,8 +978,11 @@ struct Index {
             .height(24)
             .fillColor(Color.Gray)
             .onClick(() => {
-              this.memoService.moveMemoCategory(category.value.id, this.kvStore!, this.uiContext);
+              this.memoService.updateMemoCategory(category.value.id, this.kvStore!, this.uiContext);
               this.categoryService.deleteCategoryById(category.value.id, this.kvStore!);
+              if (category.value.id === this.curUserCategory.id) {
+                this.curUserCategory = this.categoryService.getDefaultCategory();
+              }
             });
 
           // 编辑按钮
@@ -772,7 +1005,7 @@ struct Index {
                   transition: TransitionEffect.SLIDE,
                 })
                 .then((dialogId: number) => {
-                  this.createCategoryDialogId = dialogId;
+                  this.createEditCategoryDialogId = dialogId;
                 })
                 .catch((error: BusinessError) => {
                   console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
@@ -813,25 +1046,25 @@ struct Index {
     Scroll() {
       Column({ space: 24 }) {
         Column({ space: 12 }) {
-          this.systemCategoryBuilder(
+          this.systemCategoryItem(
             $r('app.media.doc'),
             SystemCategory.ALL_MEMO,
             UIUtils.makeBinding(() => this.allMemoCount)
           );
 
-          this.systemCategoryBuilder(
+          this.systemCategoryItem(
             $r('app.media.star'),
             SystemCategory.FAVORITE_MEMO,
             UIUtils.makeBinding(() => this.favoriteMemoCount)
           );
 
-          this.systemCategoryBuilder(
+          this.systemCategoryItem(
             $r('app.media.lock'),
             SystemCategory.LOCKED_MEMO,
             UIUtils.makeBinding(() => this.lockedMemoCount)
           );
 
-          this.systemCategoryBuilder(
+          this.systemCategoryItem(
             $r('app.media.trash'),
             SystemCategory.DELETE_MEMO,
             UIUtils.makeBinding(() => this.delMemoCount)
@@ -862,7 +1095,7 @@ struct Index {
           ForEach(
             this.categoryService.getCategoryList(),
             (category: UserCategory) => {
-              this.userCategoryBuilder(UIUtils.makeBinding(() => category));
+              this.userCategoryItem(UIUtils.makeBinding(() => category));
             },
             (category: UserCategory) => JSON.stringify(category),
           );
@@ -894,7 +1127,7 @@ struct Index {
                 transition: TransitionEffect.SLIDE,
               })
               .then((dialogId: number) => {
-                this.createCategoryDialogId = dialogId;
+                this.createEditCategoryDialogId = dialogId;
               })
               .catch((error: BusinessError) => {
                 console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);

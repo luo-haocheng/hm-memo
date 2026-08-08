@@ -1,5 +1,5 @@
-import { KVStore, SerializeUtil } from 'serializer';
 import { SystemCategory, UserCategory } from './Model';
+import { KVStore } from 'serializer';
 import { Memo } from 'memo_editor';
 
 /**
@@ -9,17 +9,6 @@ function initCategoryList(): Array<UserCategory> {
   let categoryList: Array<UserCategory> = [];
   categoryList.push(new UserCategory('默认', 0, '-1',));
   return categoryList;
-}
-
-/**
- * 持久化 保存备忘
- */
-function putMemoInKvStore(memo: Memo, uiContext: UIContext, kvStore: KVStore, prefix: string) {
-  SerializeUtil.serialize(memo.styledString, uiContext).then(value => {
-    let key = prefix + '_' + memo.id;
-    memo.serializedStyledString = value;
-    kvStore.put(key, JSON.stringify(memo).replace(/__ob_/g, ''));
-  });
 }
 
 @ObservedV2
@@ -149,7 +138,7 @@ export class CategoryService {
   /**
    * 移动分类
    */
-  moveCategory(memo: Memo, targetCategoryId: string, kvStore: KVStore, uiContext: UIContext) {
+  moveCategory(memo: Memo, targetCategoryId: string) {
     const originalCategoryId = memo.categoryId;
     if (originalCategoryId === targetCategoryId) {
       return;

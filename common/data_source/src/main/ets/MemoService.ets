@@ -110,11 +110,11 @@ export class MemoService {
   /**
    * 移动笔记分类
    */
-  public moveMemoCategory(categoryId: string, kvStore: KVStore, uiContext: UIContext) {
+  public updateMemoCategory(categoryId: string, kvStore: KVStore, uiContext: UIContext) {
     this.memoList
       .filter(memo => memo.categoryId === categoryId)
       .forEach(memo => {
-        this.categoryService.moveCategory(memo, '-1', kvStore, uiContext);
+        this.categoryService.moveCategory(memo, '-1');
         memo.categoryId = '-1';
         deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
         putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
