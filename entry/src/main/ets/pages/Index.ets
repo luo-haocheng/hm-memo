@@ -19,6 +19,7 @@ struct Index {
   categoryService: CategoryService = CategoryService.instance;
   moveToCategoryDialogId: number = 0;
   createEditCategoryDialogId: number = 0;
+  cardScroller: Scroller = new Scroller();
   cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
   @Provider() kvStore: KVStore | undefined = undefined;
@@ -33,8 +34,10 @@ struct Index {
   @Local moveMemoList: Array<Memo> = [];
   @Local isMoveToNewCategory: boolean = false;
   @Local selectSortMethod: boolean = false;
-  @Local curSortMethod: SortMethodEnum = SortMethodEnum.UPDATE_TIME;
   @Local curShowMethod: ShowMethodEnum = ShowMethodEnum.LIST;
+  @Local curSortMethod: SortMethodEnum = SortMethodEnum.UPDATE_TIME;
+  @Local isSearching: boolean = false;
+  @Local searchKeyWord: string = '';
   @Local curEditCategory?: UserCategory = undefined;
   @Local curSystemCategory?: SystemCategory = SystemCategory.ALL_MEMO;
   @Local curUserCategory: UserCategory = this.categoryService.getDefaultCategory();
@@ -95,6 +98,45 @@ struct Index {
     await this.memoService.loadDeleteMemo(this.kvStore);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.currentMemoList);
+  }
+
+  onBackPress(): boolean | void {
+    if (this.isMultiChoice) {
+      this.getUIContext().animateTo(
+        {
+          duration: 300,
+          curve: Curve.Ease,
+          playMode: PlayMode.Normal,
+        },
+        () => {
+          this.isMultiChoice = false;
+        });
+      return true;
+    } else if (this.isShowSideBar) {
+      this.getUIContext().animateTo(
+        {
+          duration: 300,
+          curve: Curve.Ease,
+          playMode: PlayMode.Normal,
+        },
+        () => {
+          this.isShowSideBar = false;
+        });
+      return true;
+    } else if (this.isSearching) {
+      this.getUIContext().animateTo(
+        {
+          duration: 300,
+          curve: Curve.Ease,
+          playMode: PlayMode.Normal,
+        },
+        () => {
+          this.isSearching = false;
+        });
+      return true;
+    }
+
+    return false;
   }
 
   currentHeader() {
@@ -265,10 +307,10 @@ struct Index {
     .width('100%')
     .justifyContent(FlexAlign.Start)
     .padding({
-      top: 12,
+      top: 8,
       left: 16,
       right: 16,
-      bottom: 12
+      bottom: 8,
     });
   }
 
@@ -400,23 +442,79 @@ struct Index {
   @Builder
   searchBar() {
     if (!this.isMultiChoice) {
-      Search({ placeholder: '搜索' })
-        .margin({ bottom: 0 })
-        .fontColor($r('sys.color.font_primary'))
-        .textFont({ size: $r('sys.float.Body_M') })
-        .placeholderColor($r('sys.color.font_secondary'))
-        .placeholderFont({ size: $r('sys.float.Body_M') })
-        .backgroundColor($r('sys.color.comp_background_list_card'));
+      Row({ space: 8 }) {
+        if (this.isSearching) {
+          Image($r('app.media.chevron_left'))
+            .width(40)
+            .height(40)
+            .padding(12)
+            .borderRadius('50%')
+            .fillColor($r('sys.color.font_primary'))
+            .backgroundColor($r('sys.color.comp_background_list_card'))
+            .layoutWeight(0)
+            .onClick(() => {
+              this.getUIContext().animateTo(
+                {
+                  duration: 300,
+                  curve: Curve.Ease,
+                  playMode: PlayMode.Normal,
+                },
+                () => {
+                  this.isSearching = false;
+                  this.searchKeyWord = '';
+                  this.getUIContext().getFocusController().clearFocus();
+                });
+            });
+        }
+
+        Search({ value: this.searchKeyWord!!, placeholder: '搜索' })
+          .margin({ bottom: 0 })
+          .searchIcon({ size: 14 })
+          .fontColor($r('sys.color.font_primary'))
+          .textFont({ size: $r('sys.float.Body_M') })
+          .placeholderColor($r('sys.color.font_secondary'))
+          .placeholderFont({ size: $r('sys.float.Body_M') })
+          .backgroundColor($r('sys.color.comp_background_list_card'))
+          .layoutWeight(1)
+          .onFocus(() => {
+            this.getUIContext().animateTo(
+              {
+                duration: 300,
+                curve: Curve.Ease,
+                playMode: PlayMode.Normal,
+              },
+              () => {
+                this.isSearching = true;
+              });
+          });
+      }
+      .width('100%')
+      .margin({ top: 8, bottom: 12 });
     }
   }
 
+  isAddMemoButtonShow = () => {
+    if (this.isMultiChoice) {
+      return false;
+    }
+    if (this.isSearching) {
+      return false;
+    }
+    if (this.isShowSideBar) {
+      return false;
+    }
+    if (this.curSystemCategory === SystemCategory.LOCKED_MEMO) {
+      return false;
+    }
+    if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+      return false;
+    }
+    return true;
+  };
+
   @Builder
   addMemoButton() {
-    if (
-      !this.isMultiChoice &&
-        this.curSystemCategory !== SystemCategory.LOCKED_MEMO &&
-        this.curSystemCategory !== SystemCategory.DELETE_MEMO
-    ) {
+    if (this.isAddMemoButtonShow()) {
       SymbolGlyph($r('sys.symbol.plus'))
         .padding(8)
         .fontSize(35)
@@ -424,7 +522,7 @@ struct Index {
         .borderRadius('50%')
         .backgroundColor('#EBAC24')
         .translate({ x: '-50%' })
-        .position({ bottom: 40, left: '50%' })
+        .position({ bottom: AppStorage.get('BottomRectHeight') as number, left: '50%' })
         .onClick(() => {
           const params: Record<string, Object> = {
             'memoId': '',
@@ -645,58 +743,74 @@ struct Index {
 
   @Builder
   cardList() {
-    Column() {
-      List({ space: 12, scroller: this.cardListScroller }) {
-        ListItem() {
+    Scroll(this.cardScroller) {
+      Column() {
+        Row() {
           this.searchBar();
-        };
+        }
+        .width('100%')
+        .layoutWeight(0);
 
-        ForEach(
-          this.currentMemoList,
-          (memo: Memo) => {
-            ListItem() {
-              this.cardItem(UIUtils.makeBinding(() => memo));
-            }
-            .swipeAction({
-              end: {
-                builder: () => {
-                  if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                    this.deleteMemoEnd(memo);
-                  } else {
-                    this.memoItemEnd(memo);
+        List({ space: 12, scroller: this.cardListScroller }) {
+          ForEach(
+            this.currentMemoList,
+            (memo: Memo) => {
+              ListItem() {
+                this.cardItem(UIUtils.makeBinding(() => memo));
+              }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    if (!this.isMultiChoice) {
+                      if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                        this.deleteMemoEnd(memo);
+                      } else {
+                        this.memoItemEnd(memo);
+                      }
+                    }
                   }
                 }
-              }
-            })
-            .gesture(
-              LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                .onAction(() => {
-                  this.handleLongPress(memo);
-                })
-            );
-          },
-          (item: Memo) => JSON.stringify(item),
-        );
+              })
+              .gesture(
+                LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+                  .onAction(() => {
+                    this.handleLongPress(memo);
+                  })
+              );
+            },
+            (item: Memo) => JSON.stringify(item),
+          );
+        }
+        .width('100%')
+        .contentEndOffset(96)
+        .scrollBar(BarState.Off)
+        .layoutWeight(this.isSearching ? 1 : 0);
       }
       .width('100%')
-      .height('100%')
-      .contentEndOffset(96)
-      .scrollBar(BarState.Off)
-      .onDidScroll(() => {
-        const yOffset = this.cardListScroller.currentOffset().yOffset;
-        if (yOffset > 20 && !this.isCardListScroll) {
-          this.getUIContext().animateTo(
-            {
-              duration: 300,
-              curve: Curve.EaseOut,
-              playMode: PlayMode.Normal,
-            },
-            () => {
-              this.isCardListScroll = true;
-            });
-        }
-      })
-      .onReachStart(() => {
+      .padding({
+        left: $r('sys.float.padding_level8'),
+        right: $r('sys.float.padding_level8'),
+      });
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .scrollBar(BarState.Off)
+    .onDidScroll(() => {
+      const yOffset = this.cardScroller.currentOffset().yOffset;
+      if (yOffset > 32 && !this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = true;
+          });
+      }
+    })
+    .onScrollEdge((side: Edge) => {
+      if (side === Edge.Top && this.isCardListScroll) {
         this.getUIContext().animateTo(
           {
             duration: 300,
@@ -706,14 +820,7 @@ struct Index {
           () => {
             this.isCardListScroll = false;
           });
-      });
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .margin({ bottom: 10 })
-    .padding({
-      left: $r('sys.float.padding_level8'),
-      right: $r('sys.float.padding_level8'),
+      }
     });
   }
 
@@ -1329,7 +1436,9 @@ struct Index {
           Stack() {
             Column() {
               // 顶部栏
-              this.headerArea();
+              if (!this.isSearching) {
+                this.headerArea();
+              }
 
               // 备忘列表
               this.showMemoList();
@@ -1372,7 +1481,7 @@ struct Index {
         .showSideBar($$this.isShowSideBar);
 
 
-        if (!this.isMultiChoice) {
+        if (!this.isMultiChoice && !this.isSearching) {
           Column() {
             Image(this.isShowSideBar ? $r('app.media.open_sidebar') : $r('app.media.close_sidebar'))
               .headerButtonStyle()
