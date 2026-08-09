@@ -2,8 +2,10 @@ import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
 import { CategoryService, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { SegBtnItems, ToolBar, ToolBarList, ToolBarName } from '../constants/HomeUIConstant';
+import { DeleteToolBarList, NormalToolBarList, SegBtnItems, ToolBar, ToolBarName } from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
+
+interface GeneratedTypeLiteralInterface_1 {}
 
 @Entry
 @ComponentV2
@@ -17,7 +19,6 @@ struct Index {
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local segBtnIndex: number = 0;
-  @Local choiceCount: number = 0;
   @Local isMultiChoice: boolean = false;
   @Local isShowSideBar: boolean = false;
   @Local newCategoryName: string = '';
@@ -42,6 +43,15 @@ struct Index {
   @Computed
   get allMemoCount() {
     return this.memoService.memoList.length;
+  }
+
+  @Computed
+  get choiceMemoCount() {
+    let count = 0;
+    this.currentMemoList.forEach((memo) => {
+      count += memo.isSelected ? 1 : 0;
+    });
+    return count;
   }
 
   @Computed
@@ -87,22 +97,21 @@ struct Index {
     }
   }
 
-  resetCategory(category: UserCategory) {
-    this.curUserCategory = category;
-  }
-
-  recoverInitState() {
-    this.isMultiChoice = false;
-    this.choiceCount = 0;
-  }
-
   // 备忘长按事件
   handleLongPress(item: Memo) {
     if (!this.isMultiChoice) {
       this.currentMemoList.forEach(memo => memo.isSelected = false);
       this.isMultiChoice = true;
       item.isSelected = true;
-      this.choiceCount = 1;
+    }
+  }
+
+  // 全选
+  handleChoiceAll() {
+    if (this.choiceMemoCount === this.currentMemoList.length) {
+      this.currentMemoList.forEach(memo => memo.isSelected = false);
+    } else {
+      this.currentMemoList.forEach(memo => memo.isSelected = true);
     }
   }
 
@@ -116,17 +125,6 @@ struct Index {
     });
 
     return choiceMemoArr;
-  }
-
-  // 全选
-  handleChoiceAll() {
-    if (this.choiceCount === this.currentMemoList.length) {
-      this.currentMemoList.forEach(memo => memo.isSelected = false);
-      this.choiceCount = 0;
-    } else {
-      this.currentMemoList.forEach(memo => memo.isSelected = true);
-      this.choiceCount = this.currentMemoList.length;
-    }
   }
 
   // 底部工具栏点击事件 分类、删除、全选
@@ -155,9 +153,6 @@ struct Index {
           alignment: DialogAlignment.Bottom,
           transition: TransitionEffect.SLIDE,
           offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
-          onDidDisappear: () => {
-            this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
-          }
         })
         .then((dialogId: number) => {
           this.moveToCategoryDialogId = dialogId;
@@ -173,9 +168,16 @@ struct Index {
       }
     } else if (name === ToolBarName.DELETE) {
       choiceMemos.forEach((memo) => {
-        this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+        if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+          this.memoService.deletePermanently(memo.id, this.kvStore);
+        } else {
+          this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+        }
       });
-      this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
+    } else if (name === ToolBarName.RECOVER) {
+      choiceMemos.forEach((memo) => {
+        this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+      });
     }
   }
 
@@ -198,11 +200,11 @@ struct Index {
           .visibility(this.isMultiChoice ? Visibility.Visible : Visibility.Hidden)
           .onClick(() => {
             this.currentMemoList.forEach(memo => memo.isSelected = false);
-            this.recoverInitState();
+            this.isMultiChoice = false;
           });
 
         if (this.isMultiChoice) {
-          Text(`已选择${this.choiceCount}项`)
+          Text(this.choiceMemoCount === 0 ? '未选择' : `已选择${this.choiceMemoCount}项`)
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('sys.color.font_primary'));
@@ -296,24 +298,40 @@ struct Index {
     }
   }
 
+  currentToolBar = () => {
+    return this.curSystemCategory === SystemCategory.DELETE_MEMO ? DeleteToolBarList : NormalToolBarList;
+  };
+  isDeselectAll = (name: ToolBarName) => {
+    return name === ToolBarName.SELECT_ALL && this.choiceMemoCount === this.currentMemoList.length;
+  };
+  isToolBarEnable = (name: ToolBarName) => {
+    return name === ToolBarName.SELECT_ALL || this.choiceMemoCount > 0;
+  };
+
   @Builder
   toolBarBuilder() {
     if (this.isMultiChoice) {
-      Row() {
+      Row({ space: 24 }) {
         ForEach(
-          ToolBarList,
+          this.currentToolBar(),
           (item: ToolBar) => {
-            Column({ space: 5 }) {
-              Image(item.icon)
-                .width(24)
-                .height(24)
-                .fillColor($r('sys.color.font_primary'));
+            Button({ stateEffect: false }) {
+              Column({ space: 5 }) {
+                Image(item.icon)
+                  .width(24)
+                  .height(24)
+                  .fillColor(this.isDeselectAll(item.name) ? '#EBAC24' : $r('sys.color.font_primary'));
 
-              Text(item.name)
-                .fontSize(10)
-                .fontWeight(600)
-                .fontColor($r('sys.color.font_primary'));
+                Text(this.isDeselectAll(item.name) ? '取消全选' : item.name)
+                  .fontSize(10)
+                  .fontWeight(600)
+                  .fontColor(this.isDeselectAll(item.name) ? '#EBAC24' : $r('sys.color.font_primary'));
+              }
+              .width('100%');
             }
+            .width(40)
+            .backgroundColor(Color.Transparent)
+            .enabled(this.isToolBarEnable(item.name))
             .onClick(() => {
               this.handleToolBarClick(item.name);
             });
@@ -321,11 +339,14 @@ struct Index {
           (item: ToolBar) => JSON.stringify(item)
         );
       }
-      .width('70%')
       .borderRadius('50%')
-      .padding({ top: 8, bottom: 8 })
-      .justifyContent(FlexAlign.SpaceAround)
-      .backgroundColor($r('sys.color.comp_background_list_card'))
+      .padding({
+        top: 8,
+        bottom: 8,
+        left: 24,
+        right: 24
+      })
+      .backgroundColor($r('sys.color.segment_button_v2_capsule_button_background'))
       .translate({ x: '-50%' })
       .position({ left: '50%', bottom: AppStorage.get('BottomRectHeight') as number });
     }
@@ -359,10 +380,7 @@ struct Index {
           .width(20)
           .height(20)
           .selectedColor('#EBAC24')
-          .select(memo.value.isSelected!!)
-          .onChange(() => {
-            this.choiceCount = this.currentMemoList.filter(memo => memo.isSelected).length;
-          });
+          .select(memo.value.isSelected!!);
       }
     }
     .padding(12)

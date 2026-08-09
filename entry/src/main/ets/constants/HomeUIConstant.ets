@@ -5,8 +5,8 @@ export const SegBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ tex
 
 export enum ToolBarName {
   MOVE = '移动',
-  SHARE = '分享',
   DELETE = '删除',
+  RECOVER = '恢复',
   SELECT_ALL = '全选',
 }
 
@@ -15,11 +15,7 @@ export interface ToolBar {
   icon: Resource,
 }
 
-export const ToolBarList: ToolBar[] = [
-  {
-    name: ToolBarName.SHARE,
-    icon: $r('app.media.share')
-  },
+export const NormalToolBarList: ToolBar[] = [
   {
     name: ToolBarName.MOVE,
     icon: $r('app.media.arrow_right_folder_circle'),
@@ -34,6 +30,21 @@ export const ToolBarList: ToolBar[] = [
   },
 ];
 
+export const DeleteToolBarList: ToolBar[] = [
+  {
+    name: ToolBarName.DELETE,
+    icon: $r('app.media.trash'),
+  },
+  {
+    name: ToolBarName.RECOVER,
+    icon: $r('app.media.arrow_counterclockwise')
+  },
+  {
+    name: ToolBarName.SELECT_ALL,
+    icon: $r('app.media.checkmark_square_on_square'),
+  },
+];
+
 export interface SortType {
   name: string | Resource;
   type: SortEnum;
@@ -41,32 +52,32 @@ export interface SortType {
 
 export const sortData: SortType[] = [
   {
-    name: '按创建时间排序',
+    name: '创建时间',
     type: SortEnum.CREATE_TIME,
   },
   {
-    name: '按修改时间排序',
+    name: '修改时间',
     type: SortEnum.UPDATE_TIME,
   }
 ];
 
 export enum ShowMethodEnum {
-  CARD = '1', // 瀑布流方式展示
+  Grid = '1', // 瀑布流方式展示
   LIST = '2', // 常规列表
 }
 
 export interface ShowMethod {
-  name: string | Resource;
+  name: ResourceStr;
   type: ShowMethodEnum,
 }
 
 export const showType: ShowMethod[] = [
   {
-    name: '按卡片展示',
-    type: ShowMethodEnum.CARD,
+    name: '宫格视图',
+    type: ShowMethodEnum.Grid,
   },
   {
-    name: '按列表展示',
+    name: '列表视图',
     type: ShowMethodEnum.LIST,
   }
 ];
