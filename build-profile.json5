@@ -63,10 +63,6 @@
     {
       "name": "data_source",
       "srcPath": "./common/data_source"
-    },
-    {
-      "name": "utils",
-      "srcPath": "./common/utils",
     }
   ]
 }

@@ -119,12 +119,30 @@ export class MemoService {
       });
   }
 
+  /**
+   * 收藏/取消收藏备忘
+   */
   public collectMemo(memoId: string, isFavorite: boolean, kvStore?: KVStore, uiContext?: UIContext) {
     const memo = this.memoList.find(item => item.id === memoId);
     if (!memo) {
       return;
     }
     memo.isFavorite = isFavorite;
+
+    if (kvStore && uiContext) {
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+    }
+  }
+
+  /**
+   * 置顶/取消置顶备忘
+   */
+  public pinMemo(memoId: string, pinTime: string, kvStore?: KVStore, uiContext?: UIContext) {
+    const memo = this.memoList.find(item => item.id === memoId);
+    if (!memo) {
+      return;
+    }
+    memo.pinTime = pinTime;
 
     if (kvStore && uiContext) {
       putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
@@ -261,6 +279,7 @@ export class MemoService {
     const memo = new Memo(value);
     memo.id = serializedMemo.id;
     memo.title = serializedMemo.title;
+    memo.pinTime = serializedMemo.pinTime;
     memo.isLocked = serializedMemo.isLocked;
     memo.isFavorite = serializedMemo.isFavorite;
     memo.categoryId = serializedMemo.categoryId;

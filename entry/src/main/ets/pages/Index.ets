@@ -307,10 +307,10 @@ struct Index {
     .width('100%')
     .justifyContent(FlexAlign.Start)
     .padding({
-      top: 8,
+      top: 12,
       left: 16,
       right: 16,
-      bottom: 8,
+      bottom: 12,
     });
   }
 
@@ -591,21 +591,69 @@ struct Index {
   @Builder
   cardItem(memo: Binding<Memo>) {
     Row() {
-      Column({ space: 12 }) {
-        Text(memo.value.title)
-          .maxLines(1)
-          .fontSize(16)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('sys.color.font_primary'))
-          .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Column({ space: 8 }) {
+        Row({ space: 8 }) {
+          Column()
+            .width(3)
+            .height(14)
+            .borderRadius(3)
+            .backgroundColor('#EBAC24')
+            .layoutWeight(0);
 
-        Text(memo.value.description)
-          .maxLines(1)
-          .fontSize(14)
-          .lineHeight(21)
-          .fontWeight(FontWeight.Regular)
-          .fontColor($r('sys.color.font_secondary'))
-          .textOverflow({ overflow: TextOverflow.Ellipsis });
+          Text(memo.value.title)
+            .maxLines(1)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('sys.color.font_primary'))
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1);
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Center);
+
+        Row({ space: 5 }) {
+          Text('8月9日')
+            .fontSize(12)
+            .fontWeight(FontWeight.Regular)
+            .fontColor($r('sys.color.font_secondary'))
+            .layoutWeight(0);
+
+          Row({ space: 5 }) {
+            if (memo.value.isLocked) {
+              Image($r('app.media.lock_fill'))
+                .width(12)
+                .height(12)
+                .fillColor($r('sys.color.font_secondary'));
+            }
+
+            if (memo.value.pinTime !== '-1') {
+              Image($r('app.media.pin_to_top'))
+                .width(12)
+                .height(12)
+                .fillColor($r('sys.color.font_secondary'));
+            }
+
+            if (memo.value.isFavorite) {
+              Image($r('app.media.star_fill'))
+                .width(12)
+                .height(12)
+                .fillColor($r('sys.color.font_secondary'));
+            }
+          }
+          .layoutWeight(0);
+
+          Text(memo.value.description)
+            .maxLines(1)
+            .fontSize(12)
+            .fontWeight(FontWeight.Regular)
+            .fontColor($r('sys.color.font_secondary'))
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1);
+        }
+        .margin({ left: 12 })
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Center);
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
@@ -619,7 +667,7 @@ struct Index {
           .select(memo.value.isSelected!!);
       }
     }
-    .padding(12)
+    .padding(16)
     .width('100%')
     .borderRadius(16)
     .alignItems(VerticalAlign.Center)
@@ -638,6 +686,28 @@ struct Index {
   @Builder
   memoItemEnd(memo: Memo) {
     Row({ space: 8 }) {
+      // 置顶/取消置顶
+      Image(memo.pinTime === '-1' ? $r('app.media.pin_to_top') : $r('app.media.unpin_to_top'))
+        .width(40)
+        .height(40)
+        .padding(8)
+        .borderRadius('50%')
+        .fillColor(Color.White)
+        .backgroundColor('#3CB371')
+        .onClick(() => {
+          let pinTime = '-1';
+          if (memo.pinTime === '-1') {
+            pinTime = new Date().getTime().toString();
+          }
+          this.memoService.pinMemo(memo.id, pinTime, this.kvStore, this.uiContext);
+
+          try {
+            this.cardListScroller.closeAllSwipeActions();
+          } catch (error) {
+            console.error(`Failed to invoke closeAllSwipeActions. Cause: ${JSON.stringify(error)}`);
+          }
+        });
+
       // 移动备忘
       Image($r('app.media.arrow_right_folder_fill'))
         .width(40)
@@ -794,6 +864,7 @@ struct Index {
     }
     .width('100%')
     .layoutWeight(1)
+    .align(Alignment.Top)
     .scrollBar(BarState.Off)
     .onDidScroll(() => {
       const yOffset = this.cardScroller.currentOffset().yOffset;
