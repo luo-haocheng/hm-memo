@@ -11,7 +11,7 @@ export enum SystemCategory {
 /**
  * 排序方式
  */
-export enum SortEnum {
+export enum SortMethodEnum {
   /**
    * 按创建时间
    */
@@ -20,14 +20,6 @@ export enum SortEnum {
    * 按修改时间
    */
   UPDATE_TIME = 'updateTime',
-  /**
-   * 按进入回收站时间升序（最早在前）
-   */
-  CREATE_TIME_ASC = 'createTimeAsc',
-  /**
-   * 按进入回收站时间降序（最晚在前）
-   */
-  CREATE_TIME_DESC = 'createTimeDesc',
 }
 
 /**

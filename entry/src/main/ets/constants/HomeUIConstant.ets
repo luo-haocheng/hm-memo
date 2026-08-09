@@ -1,4 +1,4 @@
-import { SortEnum } from 'data_source';
+import { SortMethodEnum } from 'data_source';
 import { SegmentButtonV2Items } from '@kit.ArkUI';
 
 export const SegBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
@@ -45,39 +45,8 @@ export const DeleteToolBarList: ToolBar[] = [
   },
 ];
 
-export interface SortType {
-  name: string | Resource;
-  type: SortEnum;
-}
-
-export const sortData: SortType[] = [
-  {
-    name: '创建时间',
-    type: SortEnum.CREATE_TIME,
-  },
-  {
-    name: '修改时间',
-    type: SortEnum.UPDATE_TIME,
-  }
-];
 
 export enum ShowMethodEnum {
-  Grid = '1', // 瀑布流方式展示
-  LIST = '2', // 常规列表
+  Grid = '宫格视图',
+  LIST = '列表视图',
 }
-
-export interface ShowMethod {
-  name: ResourceStr;
-  type: ShowMethodEnum,
-}
-
-export const showType: ShowMethod[] = [
-  {
-    name: '宫格视图',
-    type: ShowMethodEnum.Grid,
-  },
-  {
-    name: '列表视图',
-    type: ShowMethodEnum.LIST,
-  }
-];

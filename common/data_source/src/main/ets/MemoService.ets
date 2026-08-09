@@ -1,7 +1,7 @@
 import { Memo } from 'memo_editor';
 import { KVStore, SerializeUtil } from 'serializer';
 import { CategoryService } from './CategoryService';
-import { SortEnum, SystemCategory, UserCategory } from './Model';
+import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
 import { UIContext } from '@kit.ArkUI';
 
 @ObservedV2
@@ -221,12 +221,12 @@ export class MemoService {
   /**
    * 查询备忘列表
    */
-  public getMemoList(id?: string, sortType?: SortEnum, keyWord: string = '') {
+  public getMemoList(id?: string, sortType?: SortMethodEnum, keyWord: string = '') {
     let memoList: Memo[] = this.search(keyWord);
     if (id !== undefined && id !== '-1') {
       memoList = memoList.filter((item) => item.categoryId === id);
     }
-    if (sortType === SortEnum.CREATE_TIME) {
+    if (sortType === SortMethodEnum.CREATE_TIME) {
       memoList = memoList.sort((a, b) => parseInt(b.createTime) - parseInt(a.createTime));
     } else {
       memoList = memoList.sort((a, b) => parseInt(b.updateTime) - parseInt(a.updateTime));

@@ -1,11 +1,16 @@
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
-import { CategoryService, MemoService, SystemCategory, UserCategory } from 'data_source';
+import { CategoryService, MemoService, SortMethodEnum, SystemCategory, UserCategory } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { DeleteToolBarList, NormalToolBarList, SegBtnItems, ToolBar, ToolBarName } from '../constants/HomeUIConstant';
+import {
+  DeleteToolBarList,
+  NormalToolBarList,
+  SegBtnItems,
+  ShowMethodEnum,
+  ToolBar,
+  ToolBarName
+} from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
-
-interface GeneratedTypeLiteralInterface_1 {}
 
 @Entry
 @ComponentV2
@@ -27,6 +32,9 @@ struct Index {
   @Local duplicateCategoryName: boolean = false;
   @Local moveMemoList: Array<Memo> = [];
   @Local isMoveToNewCategory: boolean = false;
+  @Local selectSortMethod: boolean = false;
+  @Local curSortMethod: SortMethodEnum = SortMethodEnum.UPDATE_TIME;
+  @Local curShowMethod: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local curEditCategory?: UserCategory = undefined;
   @Local curSystemCategory?: SystemCategory = SystemCategory.ALL_MEMO;
   @Local curUserCategory: UserCategory = this.categoryService.getDefaultCategory();
@@ -226,7 +234,12 @@ struct Index {
         Image($r('app.media.more_option'))
           .headerButtonStyle()
           .fillColor($r('sys.color.font_primary'))
-          .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible);
+          .visibility(this.isMultiChoice ? Visibility.Hidden : Visibility.Visible)
+          .bindMenu(this.moreOptionsMenu, {
+            onWillDisappear: () => {
+              this.selectSortMethod = false;
+            }
+          });
       }
       .width('100%')
       .justifyContent(FlexAlign.SpaceBetween);
@@ -257,6 +270,131 @@ struct Index {
       right: 16,
       bottom: 12
     });
+  }
+
+  @Builder
+  moreOptionsMenu() {
+    Column() {
+      Row() {
+        Text('多选')
+          .fontSize(14)
+          .fontColor($r('sys.color.font_primary'));
+      }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 })
+      .borderWidth({ bottom: 0.5 })
+      .borderColor($r('sys.color.ohos_id_color_button_divider'))
+      .onClick(() => {
+        this.isMultiChoice = true;
+      });
+
+      Row() {
+        Text(this.curShowMethod === ShowMethodEnum.LIST ? ShowMethodEnum.Grid : ShowMethodEnum.LIST)
+          .fontSize(14)
+          .fontColor($r('sys.color.font_primary'));
+      }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 })
+      .borderWidth({ bottom: 0.5 })
+      .borderColor($r('sys.color.ohos_id_color_button_divider'))
+      .onClick(() => {
+        if (this.curShowMethod === ShowMethodEnum.LIST) {
+          this.curShowMethod = ShowMethodEnum.Grid;
+        } else {
+          this.curShowMethod = ShowMethodEnum.LIST;
+        }
+      });
+
+      Row() {
+        Text('排序方式')
+          .fontSize(14)
+          .fontColor(Color.Black);
+
+        Image($r('app.media.chevron_down'))
+          .width(20)
+          .height(20)
+          .backgroundColor(Color.Transparent)
+          .rotate({ angle: this.selectSortMethod ? 180 : 0 });
+      }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 })
+      .borderWidth({ bottom: 0.5 })
+      .borderColor($r('sys.color.ohos_id_color_button_divider'))
+      .justifyContent(FlexAlign.SpaceBetween)
+      .onClick(() => {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.Ease,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.selectSortMethod = !this.selectSortMethod;
+          });
+      })
+      .onTouch((event: TouchEvent) => {
+        event.stopPropagation();
+      });
+
+      if (this.selectSortMethod) {
+        Row() {
+          Text('创建时间')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1);
+
+          if (this.curSortMethod === SortMethodEnum.CREATE_TIME) {
+            Image($r('app.media.checkmark'))
+              .width(20)
+              .height(20)
+              .backgroundColor(Color.Transparent)
+              .layoutWeight(0);
+          }
+        }
+        .margin({ left: 16 })
+        .padding({ top: 16, bottom: 16 })
+        .borderWidth({ bottom: 0.5 })
+        .borderColor($r('sys.color.ohos_id_color_button_divider'))
+        .justifyContent(FlexAlign.SpaceBetween)
+        .onClick(() => {
+          this.curSortMethod = SortMethodEnum.CREATE_TIME;
+        });
+
+        Row() {
+          Text('编辑时间')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'))
+            .layoutWeight(1);
+
+          if (this.curSortMethod === SortMethodEnum.UPDATE_TIME) {
+            Image($r('app.media.checkmark'))
+              .width(20)
+              .height(20)
+              .backgroundColor(Color.Transparent)
+              .layoutWeight(0);
+          }
+        }
+        .margin({ left: 16 })
+        .padding({ top: 16, bottom: 16 })
+        .borderWidth({ bottom: 0.5 })
+        .borderColor($r('sys.color.ohos_id_color_button_divider'))
+        .justifyContent(FlexAlign.SpaceBetween)
+        .onClick(() => {
+          this.curSortMethod = SortMethodEnum.UPDATE_TIME;
+        });
+      }
+
+      Row() {
+        Text('按日期分组')
+          .fontSize(14)
+          .fontColor($r('sys.color.font_primary'));
+      }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 });
+    }
+    .width(200)
+    .padding({ left: 8, right: 8 })
+    .backgroundColor($r('sys.color.menu_back_blur_color'));
   }
 
   @Builder
@@ -673,7 +811,7 @@ struct Index {
           .height(24)
           .vertical(true)
           .strokeWidth(1)
-          .color('#DCDCDC');
+          .color($r('sys.color.ohos_id_divider_color'));
 
         Button({ type: ButtonType.Capsule, stateEffect: false }) {
           Text('保存')
