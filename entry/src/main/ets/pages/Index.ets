@@ -33,6 +33,7 @@ struct Index {
   @Local duplicateCategoryName: boolean = false;
   @Local moveMemoList: Array<Memo> = [];
   @Local isMoveToNewCategory: boolean = false;
+  @Local isGroupByDate: boolean = false;
   @Local selectSortMethod: boolean = false;
   @Local curShowMethod: ShowMethodEnum = ShowMethodEnum.LIST;
   @Local curSortMethod: SortMethodEnum = SortMethodEnum.UPDATE_TIME;
@@ -317,18 +318,20 @@ struct Index {
   @Builder
   moreOptionsMenu() {
     Column() {
-      Row() {
-        Text('多选')
-          .fontSize(14)
-          .fontColor($r('sys.color.font_primary'));
+      if (this.currentMemoList.length > 0) {
+        Row() {
+          Text('多选')
+            .fontSize(14)
+            .fontColor($r('sys.color.font_primary'));
+        }
+        .width('100%')
+        .padding({ top: 16, bottom: 16 })
+        .borderWidth({ bottom: 0.5 })
+        .borderColor($r('sys.color.ohos_id_color_button_divider'))
+        .onClick(() => {
+          this.isMultiChoice = true;
+        });
       }
-      .width('100%')
-      .padding({ top: 16, bottom: 16 })
-      .borderWidth({ bottom: 0.5 })
-      .borderColor($r('sys.color.ohos_id_color_button_divider'))
-      .onClick(() => {
-        this.isMultiChoice = true;
-      });
 
       Row() {
         Text(this.curShowMethod === ShowMethodEnum.LIST ? ShowMethodEnum.Grid : ShowMethodEnum.LIST)
@@ -427,12 +430,15 @@ struct Index {
       }
 
       Row() {
-        Text('按日期分组')
+        Text(this.isGroupByDate ? '取消按日期分组' : '按日期分组')
           .fontSize(14)
           .fontColor($r('sys.color.font_primary'));
       }
       .width('100%')
-      .padding({ top: 16, bottom: 16 });
+      .padding({ top: 16, bottom: 16 })
+      .onClick(() => {
+        this.isGroupByDate = !this.isGroupByDate;
+      });
     }
     .width(200)
     .padding({ left: 8, right: 8 })
@@ -516,8 +522,8 @@ struct Index {
   addMemoButton() {
     if (this.isAddMemoButtonShow()) {
       SymbolGlyph($r('sys.symbol.plus'))
-        .padding(8)
-        .fontSize(35)
+        .padding(10)
+        .fontSize(32)
         .fontColor([Color.White])
         .borderRadius('50%')
         .backgroundColor('#EBAC24')
