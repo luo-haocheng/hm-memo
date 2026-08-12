@@ -11,7 +11,14 @@ import {
   UserCategory
 } from 'data_source';
 import { distributedKVStore } from '@kit.ArkData';
-import { DeleteToolBarList, NormalToolBarList, SegBtnItems, ToolBar, ToolBarName } from '../constants/HomeUIConstant';
+import {
+  CATEGORY_COLOR_LIST,
+  DeleteToolBarList,
+  NormalToolBarList,
+  SegBtnItems,
+  ToolBar,
+  ToolBarName
+} from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 @Entry
@@ -32,6 +39,7 @@ struct Index {
   @Local isMultiChoice: boolean = false;
   @Local isShowSideBar: boolean = false;
   @Local newCategoryName: string = '';
+  @Local newCategoryColor: ResourceColor = '#EBAC24';
   @Local isEditCategory: boolean = false;
   @Local isCardListScroll: boolean = false;
   @Local duplicateCategoryName: boolean = false;
@@ -200,6 +208,7 @@ struct Index {
       this.moveMemoList = choiceMemos;
       this.isMoveToNewCategory = false;
       this.newCategoryName = '';
+      this.newCategoryColor = '#EBAC24';
       this.duplicateCategoryName = false;
       this.uiContext.getPromptAction()
         .openCustomDialog({
@@ -600,6 +609,15 @@ struct Index {
     }
   }
 
+  memoColor(memo: Memo): ResourceColor {
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (!category) {
+      return '#EBAC24';
+    } else {
+      return category.color;
+    }
+  }
+
   @Builder
   cardItem(memo: Binding<Memo>) {
     Row() {
@@ -609,7 +627,7 @@ struct Index {
             .width(3)
             .height(14)
             .borderRadius(3)
-            .backgroundColor('#EBAC24')
+            .backgroundColor(this.memoColor(memo.value))
             .layoutWeight(0);
 
           Text(memo.value.title)
@@ -730,8 +748,9 @@ struct Index {
         .backgroundColor('#3498DB')
         .onClick(() => {
           this.moveMemoList = [memo];
-          this.isMoveToNewCategory = false;
           this.newCategoryName = '';
+          this.newCategoryColor = '#EBAC24';
+          this.isMoveToNewCategory = false;
           this.duplicateCategoryName = false;
           this.uiContext.getPromptAction()
             .openCustomDialog({
@@ -934,6 +953,73 @@ struct Index {
   }
 
   @Builder
+  ColorPickerItem(color: ResourceColor) {
+    Column() {
+      if (this.newCategoryColor === color) {
+        Column()
+          .width(14)
+          .aspectRatio(1)
+          .borderRadius('50%')
+          .backgroundColor($r('sys.color.background_primary'));
+      }
+    }
+    .width(this.newCategoryColor === color ? 28 : 24)
+    .aspectRatio(1)
+    .borderRadius('50%')
+    .backgroundColor(color)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    .onClick(() => {
+      this.newCategoryColor = color;
+    });
+  }
+
+  @Builder
+  CategoryColorPicker1() {
+    Row() {
+      ForEach(
+        CATEGORY_COLOR_LIST,
+        (color: ResourceStr) => {
+          this.ColorPickerItem(color);
+        },
+        (color: ResourceStr) => JSON.stringify(color),
+      );
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.SpaceBetween);
+  }
+
+  @Builder
+  CategoryColorPicker2() {
+    Column({ space: 12 }) {
+      Row() {
+        ForEach(
+          CATEGORY_COLOR_LIST.slice(0, CATEGORY_COLOR_LIST.length / 2),
+          (color: ResourceStr) => {
+            this.ColorPickerItem(color);
+          },
+          (color: ResourceStr) => JSON.stringify(color),
+        );
+      }
+      .width('50%')
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Row() {
+        ForEach(
+          CATEGORY_COLOR_LIST.slice(CATEGORY_COLOR_LIST.length / 2),
+          (color: ResourceStr) => {
+            this.ColorPickerItem(color);
+          },
+          (color: ResourceStr) => JSON.stringify(color),
+        );
+      }
+      .width('50%')
+      .justifyContent(FlexAlign.SpaceBetween);
+    }
+    .padding(12);
+  }
+
+  @Builder
   createEditCategoryDialog() {
     Column() {
       Row() {
@@ -942,23 +1028,25 @@ struct Index {
           .fontWeight(FontWeight.Bold);
       }
       .width('100%')
-      .margin({ bottom: 16 })
+      .margin({ bottom: 18 })
       .justifyContent(FlexAlign.Center);
+
+      this.CategoryColorPicker1();
 
       Row() {
         Image($r('app.media.folder'))
           .width(24)
           .height(24)
-          .fillColor('#EBAC24')
+          .fillColor(this.newCategoryColor)
           .layoutWeight(0);
 
         TextInput({
           placeholder: '新建文件夹',
           text: $$this.newCategoryName,
         })
-          .fontSize(14)
+          .fontSize(13)
           .maxLength(100)
-          .placeholderFont({ size: 14 })
+          .placeholderFont({ size: 13 })
           .padding({ left: 8, right: 8 })
           .backgroundColor(Color.Transparent)
           .layoutWeight(1)
@@ -968,8 +1056,9 @@ struct Index {
 
       }
       .width('100%')
-      .borderRadius(16)
-      .padding({ left: 8, right: 8 })
+      .borderRadius('50%')
+      .margin({ top: 18 })
+      .padding({ left: 16, right: 16 })
       .alignItems(VerticalAlign.Center)
       .backgroundColor($r('sys.color.textfield_bg_color'));
 
@@ -1018,21 +1107,25 @@ struct Index {
           }
 
           if (this.categoryService.isDuplicateCategory(this.newCategoryName)) {
-            this.newCategoryName = '';
-            this.duplicateCategoryName = true;
-            return;
+            if (!this.isEditCategory || this.curEditCategory?.name !== this.newCategoryName) {
+              this.newCategoryName = '';
+              this.duplicateCategoryName = true;
+              return;
+            }
           }
 
           if (this.isEditCategory) {
             if (this.curEditCategory && this.kvStore) {
               this.curEditCategory.name = this.newCategoryName;
+              this.curEditCategory.color = this.newCategoryColor;
               this.categoryService.updateCategory(this.curEditCategory, this.kvStore);
               if (this.curEditCategory.id === this.curUserCategory.id) {
                 this.curUserCategory.name = this.curEditCategory.name;
               }
             }
           } else {
-            this.categoryService.addCategory(new UserCategory(this.newCategoryName, 0), this.kvStore!, this.uiContext);
+            const newCategory = new UserCategory(this.newCategoryName, this.newCategoryColor, 0);
+            this.categoryService.addCategory(newCategory, this.kvStore!, this.uiContext);
           }
 
           try {
@@ -1043,10 +1136,15 @@ struct Index {
         });
       }
       .width('100%')
-      .margin({ top: 16 })
+      .margin({ top: 18 })
       .justifyContent(FlexAlign.SpaceBetween);
     }
-    .padding(16);
+    .padding({
+      top: 16,
+      left: 24,
+      right: 25,
+      bottom: 16
+    });
   }
 
   @Builder
@@ -1058,7 +1156,7 @@ struct Index {
             Image($r('app.media.folder'))
               .width(24)
               .height(24)
-              .fillColor('#EBAC24');
+              .fillColor(category.value.color);
 
             Text(category.value.name)
               .fontSize(13)
@@ -1182,8 +1280,11 @@ struct Index {
                   Image($r('app.media.folder'))
                     .width(24)
                     .height(24)
-                    .fillColor('#EBAC24')
-                    .layoutWeight(0);
+                    .fillColor(this.newCategoryColor)
+                    .layoutWeight(0)
+                    .bindMenu(this.CategoryColorPicker2, {
+                      placement: Placement.Top,
+                    });
 
                   TextInput({
                     placeholder: '名称',
@@ -1226,7 +1327,7 @@ struct Index {
                       return;
                     }
                     // 新建分类
-                    const newCategory = new UserCategory(this.newCategoryName, 0);
+                    const newCategory = new UserCategory(this.newCategoryName, this.newCategoryColor, 0);
                     this.categoryService.addCategory(newCategory, this.kvStore!, this.uiContext);
                     // 移动到新建分类
                     this.moveMemoList
@@ -1314,7 +1415,7 @@ struct Index {
         Image($r('app.media.folder'))
           .width(24)
           .height(24)
-          .fillColor('#EBAC24');
+          .fillColor(category.value.color);
 
         Text(category.value.name)
           .fontSize(13)
@@ -1351,6 +1452,7 @@ struct Index {
               this.duplicateCategoryName = false;
               this.curEditCategory = category.value;
               this.newCategoryName = category.value.name;
+              this.newCategoryColor = category.value.color;
               this.uiContext.getPromptAction()
                 .openCustomDialog({
                   builder: () => {
@@ -1472,6 +1574,7 @@ struct Index {
               return;
             }
             this.newCategoryName = '';
+            this.newCategoryColor = '#EBAC24';
             this.duplicateCategoryName = false;
             this.uiContext.getPromptAction()
               .openCustomDialog({

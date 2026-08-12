@@ -43,3 +43,6 @@ export const DeleteToolBarList: ToolBar[] = [
     icon: $r('app.media.checkmark_square_on_square'),
   },
 ];
+
+export const CATEGORY_COLOR_LIST: Array<ResourceColor> =
+  ['#E74C3C', '#DC7633', '#EBAC24', '#58D68D', '#45B39D', '#5DADE2', '#800080', '#000080'];

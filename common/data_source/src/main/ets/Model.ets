@@ -44,12 +44,17 @@ export class UserCategory {
    */
   @Trace name: string = '';
   /**
+   * 分类文件夹颜色
+   */
+  @Trace color: ResourceColor = '#EBAC24';
+  /**
    * 数量
    */
   @Trace memoCount: number = 0;
 
-  constructor(name: string, memoCount: number, id?: string) {
+  constructor(name: string, color: ResourceColor, memoCount: number, id?: string) {
     this.name = name;
+    this.color = color;
     this.memoCount = memoCount;
     this.id = id ? id : new Date().getTime().toString();
   }

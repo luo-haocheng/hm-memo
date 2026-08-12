@@ -7,7 +7,7 @@ import { Memo } from 'memo_editor';
  */
 function initCategoryList(): Array<UserCategory> {
   let categoryList: Array<UserCategory> = [];
-  categoryList.push(new UserCategory('默认', 0, '-1',));
+  categoryList.push(new UserCategory('默认', '#EBAC24', 0, '-1'));
   return categoryList;
 }
 
@@ -35,7 +35,7 @@ export class CategoryService {
     if (dataList) {
       for (let i = 0; i < dataList.length; i++) {
         const category = JSON.parse(dataList[i].value as string) as UserCategory;
-        this.categoryList.push(new UserCategory(category.name, category.memoCount, category.id));
+        this.categoryList.push(new UserCategory(category.name, category.color, category.memoCount, category.id));
 
         console.info(`Load category ${category.id} success.`);
       }
@@ -118,8 +118,7 @@ export class CategoryService {
       return;
     }
 
-    const target = this.categoryList[idx];
-    this.categoryList.splice(idx, 1, new UserCategory(category.name, target.memoCount, target.id));
+    this.categoryList.splice(idx, 1, category);
 
     kvStore.put(`Category_` + category.id, JSON.stringify(category).replace(/__ob_/g, ''));
   }
