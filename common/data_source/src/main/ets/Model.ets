@@ -23,6 +23,14 @@ export enum SortMethodEnum {
 }
 
 /**
+ * 备忘展示视图选项
+ */
+export enum ShowMethodEnum {
+  Grid = '宫格视图',
+  LIST = '列表视图',
+}
+
+/**
  * 分类
  */
 @ObservedV2

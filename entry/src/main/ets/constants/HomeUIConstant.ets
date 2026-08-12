@@ -1,4 +1,3 @@
-import { SortMethodEnum } from 'data_source';
 import { SegmentButtonV2Items } from '@kit.ArkUI';
 
 export const SegBtnItems: SegmentButtonV2Items = new SegmentButtonV2Items([{ text: '备忘' }, { text: '待办' }]);
@@ -44,9 +43,3 @@ export const DeleteToolBarList: ToolBar[] = [
     icon: $r('app.media.checkmark_square_on_square'),
   },
 ];
-
-
-export enum ShowMethodEnum {
-  Grid = '宫格视图',
-  LIST = '列表视图',
-}

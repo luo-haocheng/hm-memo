@@ -1,21 +1,24 @@
 import { Memo } from 'memo_editor';
 import { KVStore } from 'serializer';
-import { CategoryService, MemoService, SortMethodEnum, SystemCategory, UserCategory } from 'data_source';
-import { distributedKVStore } from '@kit.ArkData';
 import {
-  DeleteToolBarList,
-  NormalToolBarList,
-  SegBtnItems,
+  CategoryService,
+  MemoService,
+  SettingService,
+  SettingStore,
   ShowMethodEnum,
-  ToolBar,
-  ToolBarName
-} from '../constants/HomeUIConstant';
+  SortMethodEnum,
+  SystemCategory,
+  UserCategory
+} from 'data_source';
+import { distributedKVStore } from '@kit.ArkData';
+import { DeleteToolBarList, NormalToolBarList, SegBtnItems, ToolBar, ToolBarName } from '../constants/HomeUIConstant';
 import { Binding, ColorMetrics, LengthMetrics, TabSegmentButtonV2, UIUtils } from '@kit.ArkUI';
 
 @Entry
 @ComponentV2
 struct Index {
   memoService: MemoService = MemoService.instance;
+  settingService: SettingService = SettingService.instance;
   categoryService: CategoryService = CategoryService.instance;
   moveToCategoryDialogId: number = 0;
   createEditCategoryDialogId: number = 0;
@@ -23,6 +26,7 @@ struct Index {
   cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
   @Provider() kvStore: KVStore | undefined = undefined;
+  @Provider() settingStore: SettingStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   @Local segBtnIndex: number = 0;
   @Local isMultiChoice: boolean = false;
@@ -33,10 +37,7 @@ struct Index {
   @Local duplicateCategoryName: boolean = false;
   @Local moveMemoList: Array<Memo> = [];
   @Local isMoveToNewCategory: boolean = false;
-  @Local isGroupByDate: boolean = false;
   @Local selectSortMethod: boolean = false;
-  @Local curShowMethod: ShowMethodEnum = ShowMethodEnum.LIST;
-  @Local curSortMethod: SortMethodEnum = SortMethodEnum.UPDATE_TIME;
   @Local isSearching: boolean = false;
   @Local searchKeyWord: string = '';
   @Local curEditCategory?: UserCategory = undefined;
@@ -92,8 +93,13 @@ struct Index {
   async aboutToAppear() {
     // 创建KV数据库
     this.kvStore = new KVStore();
-    const securityLevel: distributedKVStore.SecurityLevel = distributedKVStore.SecurityLevel.S1;
+    const securityLevel = distributedKVStore.SecurityLevel.S1;
     this.kvStore.kvStore = await this.kvStore.createKVStore(false, securityLevel, this.uiContext);
+    // 创建Preference数据库
+    this.settingStore = new SettingStore();
+    this.settingStore.createPreference(this.uiContext);
+    // 加载用户设置
+    await this.settingService.loadUserSetting(this.settingStore);
     // 加载备忘数据
     await this.memoService.loadEffectiveMemo(this.kvStore);
     await this.memoService.loadDeleteMemo(this.kvStore);
@@ -334,7 +340,7 @@ struct Index {
       }
 
       Row() {
-        Text(this.curShowMethod === ShowMethodEnum.LIST ? ShowMethodEnum.Grid : ShowMethodEnum.LIST)
+        Text(this.settingService.memoShowMethod === ShowMethodEnum.LIST ? ShowMethodEnum.Grid : ShowMethodEnum.LIST)
           .fontSize(14)
           .fontColor($r('sys.color.font_primary'));
       }
@@ -343,10 +349,10 @@ struct Index {
       .borderWidth({ bottom: 0.5 })
       .borderColor($r('sys.color.ohos_id_color_button_divider'))
       .onClick(() => {
-        if (this.curShowMethod === ShowMethodEnum.LIST) {
-          this.curShowMethod = ShowMethodEnum.Grid;
+        if (this.settingService.memoShowMethod === ShowMethodEnum.LIST) {
+          this.settingService.setMemoShowMethod(this.settingStore!, ShowMethodEnum.Grid);
         } else {
-          this.curShowMethod = ShowMethodEnum.LIST;
+          this.settingService.setMemoShowMethod(this.settingStore!, ShowMethodEnum.LIST);
         }
       });
 
@@ -388,7 +394,7 @@ struct Index {
             .fontColor($r('sys.color.font_primary'))
             .layoutWeight(1);
 
-          if (this.curSortMethod === SortMethodEnum.CREATE_TIME) {
+          if (this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME) {
             Image($r('app.media.checkmark'))
               .width(20)
               .height(20)
@@ -402,7 +408,7 @@ struct Index {
         .borderColor($r('sys.color.ohos_id_color_button_divider'))
         .justifyContent(FlexAlign.SpaceBetween)
         .onClick(() => {
-          this.curSortMethod = SortMethodEnum.CREATE_TIME;
+          this.settingService.setMemoSortMethod(this.settingStore!, SortMethodEnum.CREATE_TIME);
         });
 
         Row() {
@@ -411,7 +417,7 @@ struct Index {
             .fontColor($r('sys.color.font_primary'))
             .layoutWeight(1);
 
-          if (this.curSortMethod === SortMethodEnum.UPDATE_TIME) {
+          if (this.settingService.memoSortMethod === SortMethodEnum.UPDATE_TIME) {
             Image($r('app.media.checkmark'))
               .width(20)
               .height(20)
@@ -425,19 +431,19 @@ struct Index {
         .borderColor($r('sys.color.ohos_id_color_button_divider'))
         .justifyContent(FlexAlign.SpaceBetween)
         .onClick(() => {
-          this.curSortMethod = SortMethodEnum.UPDATE_TIME;
+          this.settingService.setMemoSortMethod(this.settingStore!, SortMethodEnum.UPDATE_TIME);
         });
       }
 
       Row() {
-        Text(this.isGroupByDate ? '取消按日期分组' : '按日期分组')
+        Text(this.settingService.isGroupByDate ? '取消按日期分组' : '按日期分组')
           .fontSize(14)
           .fontColor($r('sys.color.font_primary'));
       }
       .width('100%')
       .padding({ top: 16, bottom: 16 })
       .onClick(() => {
-        this.isGroupByDate = !this.isGroupByDate;
+        this.settingService.setIsGroupByDate(this.settingStore!, !this.settingService.isGroupByDate);
       });
     }
     .width(200)
