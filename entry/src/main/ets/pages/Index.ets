@@ -1490,7 +1490,7 @@ struct Index {
       .width('100%')
       .padding({ left: 16, right: 16 });
     }
-    .contentEndOffset(48)
+    .padding({ bottom: 48 })
     .scrollBar(BarState.Off);
   }
 

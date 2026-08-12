@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.cer",
+          "certpath": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B2AF9F8C8605406DCA8340CBDCA9BD1540ADC8FC17B57426501B01C0F80C07B5539B85E404F3CD0",
-          "profile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.p7b",
+          "keyPassword": "0000001B80E94E1442C66C0A1BE2EB22647DDBA8F3CE7118B795A95BF820D4C3B049921B080F385C0B7005",
+          "profile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMNote_QvmC9qWWWHXrhlN2kmDvRS-GXv0Uffnd1KNNLhCWAvc=.p12",
-          "storePassword": "0000001B0BCBDE48F5968E7524F652F4A1565BBD581583C170FCED279EEA48E954D29B294256199612B516"
+          "storeFile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.p12",
+          "storePassword": "0000001BFCFD167E4C9CD289E8BB03C38D925817FA66CBBFEF5376E79F411C249AC9CD16DD385135EC67BE"
         }
       }
     ],
@@ -20,7 +20,7 @@
         "name": "default",
         "signingConfig": "default",
         "targetSdkVersion": "6.1.1(24)",
-        "compatibleSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.0.0(20)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
           "strictMode": {
@@ -32,7 +32,7 @@
     ],
     "buildModeSet": [
       {
-        "name": "debug",
+        "name": "debug"
       },
       {
         "name": "release"
