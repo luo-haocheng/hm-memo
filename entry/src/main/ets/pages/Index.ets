@@ -644,7 +644,11 @@ struct Index {
         .alignItems(VerticalAlign.Center);
 
         Row({ space: 5 }) {
-          Text('8月9日')
+          Text(
+            dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
+              memo.value.createTime :
+              memo.value.updateTime
+            ))
             .fontSize(12)
             .fontWeight(FontWeight.Regular)
             .fontColor($r('sys.color.font_secondary'))
@@ -1697,4 +1701,42 @@ struct Index {
     .mode(NavigationMode.Stack)
     .backgroundColor($r('sys.color.background_secondary'));
   }
+}
+
+function isSameDay(date1: Date, date2: Date): boolean {
+  if (date1.getFullYear() !== date2.getFullYear()) {
+    return false;
+  }
+  if (date1.getMonth() !== date2.getMonth()) {
+    return false;
+  }
+  if (date1.getDate() !== date2.getDate()) {
+    return false;
+  }
+  return true;
+}
+
+function isSameYear(date1: Date, date2: Date): boolean {
+  return date1.getFullYear() === date2.getFullYear();
+}
+
+function isYesterday(date1: Date, date2: Date): boolean {
+  date1.setDate(date1.getDate() - 1);
+  return isSameDay(date1, date2);
+}
+
+function dateDisplay(dateStr: string): string {
+  const now = new Date();
+  const date = new Date(parseInt(dateStr));
+  if (isSameDay(now, date)) {
+    return `今天 ${date.getHours()}:${date.getMinutes()}`;
+  }
+  if (isYesterday(now, date)) {
+    return `昨天 ${date.getHours()}:${date.getMinutes()}`;
+  }
+  if (isSameYear(now, date)) {
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
