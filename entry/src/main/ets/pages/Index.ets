@@ -79,7 +79,7 @@ struct Index {
     return memoList;
   }
 
-  get groupMemoList(): Map<string, Memo[]> {
+  get groupedMemoList(): Map<string, Memo[]> {
     const groupedMemo: Map<string, Memo[]> = new Map([]);
     this.currentMemoList.forEach((memo) => {
       const dateStr = this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
@@ -112,6 +112,18 @@ struct Index {
     });
 
     return groupedMemo;
+  }
+
+  get searchMemoList(): Memo[] {
+    if (this.isSearching && this.searchKeyWord) {
+      const lowerKeyword = this.searchKeyWord.toLowerCase();
+
+      return this.currentMemoList.filter((memo) => {
+        return memo.title.toLowerCase().includes(lowerKeyword) || memo.description.toLowerCase().includes(lowerKeyword);
+      });
+    }
+
+    return this.currentMemoList;
   }
 
   @Computed
@@ -958,50 +970,113 @@ struct Index {
         .width('100%')
         .layoutWeight(0);
 
-        List({ space: 12, scroller: this.cardListScroller }) {
-          ForEach(
-            Array.from(this.groupMemoList.keys()),
-            (key: string) => {
-              if (this.groupMemoList.get(key) && this.groupMemoList.get(key)!.length > 0) {
-                ListItemGroup({ header: this.groupHeader(key), space: 12 }) {
-                  ForEach(
-                    this.groupMemoList.get(key),
-                    (memo: Memo) => {
-                      ListItem() {
-                        this.cardItem(UIUtils.makeBinding(() => memo));
+        if (this.isSearching && this.searchKeyWord) {
+          if (this.searchMemoList.length > 0) {
+            Row() {
+              Text('备忘')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('sys.color.font_primary'));
+
+              Text(`已找到 ${this.searchMemoList.length} 项`)
+                .fontSize(12)
+                .fontColor($r('sys.color.font_tertiary'));
+            }
+            .width('100%')
+            .margin({ bottom: 12 })
+            .alignItems(VerticalAlign.Center)
+            .justifyContent(FlexAlign.SpaceBetween);
+
+            List({ space: 12, scroller: this.cardListScroller }) {
+              ForEach(
+                this.searchMemoList,
+                (memo: Memo) => {
+                  ListItem() {
+                    this.cardItem(UIUtils.makeBinding(() => memo));
+                  }
+                  .swipeAction({
+                    end: {
+                      builder: () => {
+                        if (!this.isMultiChoice) {
+                          if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                            this.deleteMemoEnd(memo);
+                          } else {
+                            this.memoItemEnd(memo);
+                          }
+                        }
                       }
-                      .swipeAction({
-                        end: {
-                          builder: () => {
-                            if (!this.isMultiChoice) {
-                              if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                                this.deleteMemoEnd(memo);
-                              } else {
-                                this.memoItemEnd(memo);
+                    }
+                  });
+                },
+                (item: Memo) => JSON.stringify(item),
+              );
+            }
+            .width('100%')
+            .contentEndOffset(96)
+            .scrollBar(BarState.Off)
+            .layoutWeight(this.isSearching ? 1 : 0);
+          } else {
+            Column({ space: 16 }) {
+              Image($r('app.media.search_no_result'))
+                .width(120)
+                .height(120)
+                .fillColor($r('sys.color.font_tertiary'));
+
+              Text('没有符合条件的内容')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_tertiary'));
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+            .layoutWeight(1);
+          }
+        } else {
+          List({ space: 12, scroller: this.cardListScroller }) {
+            ForEach(
+              Array.from(this.groupedMemoList.keys()),
+              (key: string) => {
+                if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
+                  ListItemGroup({ header: this.groupHeader(key), space: 12 }) {
+                    ForEach(
+                      this.groupedMemoList.get(key),
+                      (memo: Memo) => {
+                        ListItem() {
+                          this.cardItem(UIUtils.makeBinding(() => memo));
+                        }
+                        .swipeAction({
+                          end: {
+                            builder: () => {
+                              if (!this.isMultiChoice) {
+                                if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                                  this.deleteMemoEnd(memo);
+                                } else {
+                                  this.memoItemEnd(memo);
+                                }
                               }
                             }
                           }
-                        }
-                      })
-                      .gesture(
-                        LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                          .onAction(() => {
-                            this.handleLongPress(memo);
-                          })
-                      );
-                    },
-                    (memo: Memo) => JSON.stringify(memo),
-                  );
-                };
-              }
-            },
-            (key: string) => key,
-          );
+                        })
+                        .gesture(
+                          LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+                            .onAction(() => {
+                              this.handleLongPress(memo);
+                            })
+                        );
+                      },
+                      (memo: Memo) => JSON.stringify(memo),
+                    );
+                  };
+                }
+              },
+              (key: string) => key,
+            );
+          }
+          .width('100%')
+          .contentEndOffset(96)
+          .scrollBar(BarState.Off)
+          .layoutWeight(this.isSearching ? 1 : 0);
         }
-        .width('100%')
-        .contentEndOffset(96)
-        .scrollBar(BarState.Off)
-        .layoutWeight(this.isSearching ? 1 : 0);
       }
       .width('100%')
       .padding({
@@ -1052,40 +1127,103 @@ struct Index {
         .width('100%')
         .layoutWeight(0);
 
-        List({ space: 12, scroller: this.cardListScroller }) {
-          ForEach(
-            this.currentMemoList,
-            (memo: Memo) => {
-              ListItem() {
-                this.cardItem(UIUtils.makeBinding(() => memo));
-              }
-              .swipeAction({
-                end: {
-                  builder: () => {
-                    if (!this.isMultiChoice) {
-                      if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                        this.deleteMemoEnd(memo);
-                      } else {
-                        this.memoItemEnd(memo);
+        if (this.isSearching && this.searchKeyWord) {
+          if (this.searchMemoList.length > 0) {
+            Row() {
+              Text('备忘')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('sys.color.font_primary'));
+
+              Text(`已找到 ${this.searchMemoList.length} 项`)
+                .fontSize(12)
+                .fontColor($r('sys.color.font_tertiary'));
+            }
+            .width('100%')
+            .margin({ bottom: 12 })
+            .alignItems(VerticalAlign.Center)
+            .justifyContent(FlexAlign.SpaceBetween);
+
+            List({ space: 12, scroller: this.cardListScroller }) {
+              ForEach(
+                this.searchMemoList,
+                (memo: Memo) => {
+                  ListItem() {
+                    this.cardItem(UIUtils.makeBinding(() => memo));
+                  }
+                  .swipeAction({
+                    end: {
+                      builder: () => {
+                        if (!this.isMultiChoice) {
+                          if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                            this.deleteMemoEnd(memo);
+                          } else {
+                            this.memoItemEnd(memo);
+                          }
+                        }
+                      }
+                    }
+                  });
+                },
+                (item: Memo) => JSON.stringify(item),
+              );
+            }
+            .width('100%')
+            .contentEndOffset(96)
+            .scrollBar(BarState.Off)
+            .layoutWeight(this.isSearching ? 1 : 0);
+          } else {
+            Column({ space: 16 }) {
+              Image($r('app.media.search_no_result'))
+                .width(120)
+                .height(120)
+                .fillColor($r('sys.color.font_tertiary'));
+
+              Text('没有符合条件的内容')
+                .fontSize(12)
+                .fontColor($r('sys.color.font_tertiary'));
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+            .layoutWeight(1);
+          }
+        } else {
+          List({ space: 12, scroller: this.cardListScroller }) {
+            ForEach(
+              this.currentMemoList,
+              (memo: Memo) => {
+                ListItem() {
+                  this.cardItem(UIUtils.makeBinding(() => memo));
+                }
+                .swipeAction({
+                  end: {
+                    builder: () => {
+                      if (!this.isMultiChoice) {
+                        if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                          this.deleteMemoEnd(memo);
+                        } else {
+                          this.memoItemEnd(memo);
+                        }
                       }
                     }
                   }
-                }
-              })
-              .gesture(
-                LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                  .onAction(() => {
-                    this.handleLongPress(memo);
-                  })
-              );
-            },
-            (item: Memo) => JSON.stringify(item),
-          );
+                })
+                .gesture(
+                  LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+                    .onAction(() => {
+                      this.handleLongPress(memo);
+                    })
+                );
+              },
+              (item: Memo) => JSON.stringify(item),
+            );
+          }
+          .width('100%')
+          .contentEndOffset(96)
+          .scrollBar(BarState.Off)
+          .layoutWeight(this.isSearching ? 1 : 0);
         }
-        .width('100%')
-        .contentEndOffset(96)
-        .scrollBar(BarState.Off)
-        .layoutWeight(this.isSearching ? 1 : 0);
       }
       .width('100%')
       .padding({
