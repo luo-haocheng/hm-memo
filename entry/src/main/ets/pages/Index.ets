@@ -752,7 +752,16 @@ struct Index {
           if (memo.pinTime === '-1') {
             pinTime = new Date().getTime().toString();
           }
-          this.memoService.pinMemo(memo.id, pinTime, this.kvStore, this.uiContext);
+
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.pinMemo(memo.id, pinTime, this.kvStore, this.uiContext);
+            });
 
           try {
             this.cardListScroller.closeAllSwipeActions();
@@ -828,7 +837,15 @@ struct Index {
         .fillColor(Color.White)
         .backgroundColor(Color.Red)
         .onClick(() => {
-          this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+            });
         });
     }
     .alignItems(VerticalAlign.Center)
@@ -847,7 +864,15 @@ struct Index {
         .fillColor(Color.White)
         .backgroundColor('#3498DB')
         .onClick(() => {
-          this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+            });
         });
 
       // 删除按钮
@@ -859,7 +884,15 @@ struct Index {
         .fillColor(Color.White)
         .backgroundColor(Color.Red)
         .onClick(() => {
-          this.memoService.deletePermanently(memo.id, this.kvStore);
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deletePermanently(memo.id, this.kvStore);
+            });
         });
     }
     .alignItems(VerticalAlign.Center)
@@ -1209,10 +1242,18 @@ struct Index {
         this.moveMemoList
           .filter((memo) => memo.categoryId !== category.value.id)
           .forEach((memo) => {
-            this.categoryService.moveCategory(memo, category.value.id);
+            this.getUIContext().animateTo(
+              {
+                duration: 300,
+                curve: Curve.EaseOut,
+                playMode: PlayMode.Normal,
+              },
+              () => {
+                this.categoryService.moveCategory(memo, category.value.id);
 
-            memo.categoryId = category.value.id;
-            this.memoService.updateMemo(memo, this.kvStore, this.uiContext);
+                memo.categoryId = category.value.id;
+                this.memoService.updateMemo(memo, this.kvStore, this.uiContext);
+              });
           });
         // 关闭弹窗
         try {
