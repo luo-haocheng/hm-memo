@@ -218,6 +218,7 @@ struct Index {
           width: '100%',
           alignment: DialogAlignment.Bottom,
           transition: TransitionEffect.SLIDE,
+          keyboardAvoidMode: KeyboardAvoidMode.NONE,
           offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
         })
         .then((dialogId: number) => {
@@ -760,6 +761,7 @@ struct Index {
               width: '100%',
               alignment: DialogAlignment.Bottom,
               transition: TransitionEffect.SLIDE,
+              keyboardAvoidMode: KeyboardAvoidMode.NONE,
               offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
             })
             .then((dialogId: number) => {
