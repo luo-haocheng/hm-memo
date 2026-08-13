@@ -54,11 +54,29 @@ struct Index {
 
   @Computed
   get currentMemoList() {
+    let memoList: Array<Memo> = [];
     if (this.curSystemCategory) {
-      return this.memoService.getMemosBySystemCategory(this.curSystemCategory);
+      memoList = this.memoService.getMemosBySystemCategory(this.curSystemCategory);
     } else {
-      return this.memoService.getMemosByUserCategory(this.curUserCategory);
+      memoList = this.memoService.getMemosByUserCategory(this.curUserCategory);
     }
+    if (this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME) {
+      memoList.sort((a, b) => {
+        if (a.pinTime !== b.pinTime) {
+          return parseInt(b.pinTime) - parseInt(a.pinTime);
+        }
+        return parseInt(b.createTime) - parseInt(a.createTime);
+      });
+    } else {
+      memoList.sort((a, b) => {
+        if (a.pinTime !== b.pinTime) {
+          return parseInt(b.pinTime) - parseInt(a.pinTime);
+        }
+        return parseInt(b.updateTime) - parseInt(a.updateTime);
+      });
+    }
+
+    return memoList;
   }
 
   @Computed
