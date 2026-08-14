@@ -212,6 +212,7 @@ struct Index {
         },
         () => {
           this.isSearching = false;
+          this.searchKeyWord = '';
         });
       return true;
     }
