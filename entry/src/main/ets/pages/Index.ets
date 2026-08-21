@@ -690,7 +690,98 @@ struct Index {
   }
 
   @Builder
-  cardItem(memo: Binding<Memo>) {
+  gridMemoItem(memo: Binding<Memo>) {
+    Column({ space: 8 }) {
+      Row({ space: 8 }) {
+        Column()
+          .width(3)
+          .height(14)
+          .borderRadius(3)
+          .backgroundColor(this.memoColor(memo.value))
+          .layoutWeight(0);
+
+        Text(memo.value.title)
+          .maxLines(1)
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('sys.color.font_primary'))
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1);
+      }
+      .justifyContent(FlexAlign.Start)
+      .alignItems(VerticalAlign.Center);
+
+      Text(memo.value.description)
+        .maxLines(2)
+        .fontSize(12)
+        .fontWeight(FontWeight.Regular)
+        .fontColor($r('sys.color.font_secondary'))
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+      Row() {
+        Text(
+          dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
+            memo.value.createTime :
+            memo.value.updateTime
+          ))
+          .fontSize(12)
+          .fontWeight(FontWeight.Regular)
+          .fontColor($r('sys.color.font_secondary'));
+
+        Image($r('app.media.dot_grid_1x2'))
+          .width(14)
+          .aspectRatio(1)
+          .backgroundColor(Color.Transparent)
+          .fillColor($r('sys.color.font_secondary'));
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Row({ space: 5 }) {
+        if (memo.value.isLocked) {
+          Image($r('app.media.lock_fill'))
+            .width(12)
+            .height(12)
+            .fillColor($r('sys.color.font_secondary'));
+        }
+
+        if (memo.value.pinTime !== '-1') {
+          Image($r('app.media.pin_to_top'))
+            .width(12)
+            .height(12)
+            .fillColor($r('sys.color.font_secondary'));
+        }
+
+        if (memo.value.isFavorite) {
+          Image($r('app.media.star_fill'))
+            .width(12)
+            .height(12)
+            .fillColor($r('sys.color.font_secondary'));
+        }
+      };
+    }
+    .padding({
+      top: 16,
+      left: 16,
+      right: 16,
+      bottom: 8
+    })
+    .borderRadius(12)
+    .justifyContent(FlexAlign.Start)
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor($r('sys.color.comp_background_list_card'))
+    .onClick(() => {
+      if (this.isMultiChoice) {
+        memo.value.isSelected = !memo.value.isSelected;
+      } else {
+        const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
+        this.appPathStack.pushPathByName('MemoEdit', params);
+      }
+    });
+  }
+
+  @Builder
+  listMemoItem(memo: Binding<Memo>) {
     Row() {
       Column({ space: 8 }) {
         Row({ space: 8 }) {
@@ -972,8 +1063,7 @@ struct Index {
         Row() {
           this.searchBar();
         }
-        .width('100%')
-        .layoutWeight(0);
+        .width('100%');
 
         if (this.isSearching && this.searchKeyWord) {
           if (this.searchMemoList.length > 0) {
@@ -997,7 +1087,7 @@ struct Index {
                 this.searchMemoList,
                 (memo: Memo) => {
                   ListItem() {
-                    this.cardItem(UIUtils.makeBinding(() => memo));
+                    this.listMemoItem(UIUtils.makeBinding(() => memo));
                   }
                   .swipeAction({
                     end: {
@@ -1018,8 +1108,7 @@ struct Index {
             }
             .width('100%')
             .contentEndOffset(96)
-            .scrollBar(BarState.Off)
-            .layoutWeight(this.isSearching ? 1 : 0);
+            .scrollBar(BarState.Off);
           } else {
             Column({ space: 16 }) {
               Image($r('app.media.search_no_result'))
@@ -1047,7 +1136,7 @@ struct Index {
                       this.groupedMemoList.get(key),
                       (memo: Memo) => {
                         ListItem() {
-                          this.cardItem(UIUtils.makeBinding(() => memo));
+                          this.listMemoItem(UIUtils.makeBinding(() => memo));
                         }
                         .swipeAction({
                           end: {
@@ -1079,8 +1168,7 @@ struct Index {
           }
           .width('100%')
           .contentEndOffset(96)
-          .scrollBar(BarState.Off)
-          .layoutWeight(this.isSearching ? 1 : 0);
+          .scrollBar(BarState.Off);
         }
       }
       .width('100%')
@@ -1154,7 +1242,7 @@ struct Index {
                 this.searchMemoList,
                 (memo: Memo) => {
                   ListItem() {
-                    this.cardItem(UIUtils.makeBinding(() => memo));
+                    this.listMemoItem(UIUtils.makeBinding(() => memo));
                   }
                   .swipeAction({
                     end: {
@@ -1175,8 +1263,7 @@ struct Index {
             }
             .width('100%')
             .contentEndOffset(96)
-            .scrollBar(BarState.Off)
-            .layoutWeight(this.isSearching ? 1 : 0);
+            .scrollBar(BarState.Off);
           } else {
             Column({ space: 16 }) {
               Image($r('app.media.search_no_result'))
@@ -1199,7 +1286,7 @@ struct Index {
               this.currentMemoList,
               (memo: Memo) => {
                 ListItem() {
-                  this.cardItem(UIUtils.makeBinding(() => memo));
+                  this.listMemoItem(UIUtils.makeBinding(() => memo));
                 }
                 .swipeAction({
                   end: {
@@ -1225,10 +1312,76 @@ struct Index {
             );
           }
           .width('100%')
-          .contentEndOffset(96)
-          .scrollBar(BarState.Off)
-          .layoutWeight(this.isSearching ? 1 : 0);
+          .contentEndOffset(108)
+          .scrollBar(BarState.Off);
         }
+      }
+      .width('100%')
+      .padding({
+        left: $r('sys.float.padding_level8'),
+        right: $r('sys.float.padding_level8'),
+      });
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .onDidScroll(() => {
+      const yOffset = this.cardScroller.currentOffset().yOffset;
+      if (yOffset > 32 && !this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = true;
+          });
+      }
+    })
+    .onScrollEdge((side: Edge) => {
+      if (side === Edge.Top && this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = false;
+          });
+      }
+    });
+  }
+
+  @Builder
+  memoGrid() {
+    Scroll(this.cardScroller) {
+      Column() {
+        Row() {
+          this.searchBar();
+        }
+        .width('100%');
+
+        WaterFlow() {
+          ForEach(
+            this.currentMemoList,
+            (memo: Memo) => {
+              FlowItem() {
+                this.gridMemoItem(UIUtils.makeBinding(() => memo));
+              }
+              .width('100%');
+            },
+            (memo: Memo) => JSON.stringify(memo),
+          );
+        }
+        .width('100%')
+        .padding({ bottom: 108 })
+        .scrollBar(BarState.Off)
+        .columnsTemplate('1fr 1fr')
+        .columnsGap(12)
+        .rowsGap(12);
       }
       .width('100%')
       .padding({
@@ -1294,7 +1447,11 @@ struct Index {
       if (this.settingService.isGroupByDate) {
         this.memoGroupList();
       } else {
-        this.memoList();
+        if (this.settingService.memoShowMethod === ShowMethodEnum.Grid) {
+          this.memoGrid();
+        } else {
+          this.memoList();
+        }
       }
     }
   }
