@@ -603,22 +603,26 @@ struct Index {
   @Builder
   addMemoButton() {
     if (this.isAddMemoButtonShow()) {
-      SymbolGlyph($r('sys.symbol.plus'))
-        .padding(10)
-        .fontSize(32)
-        .fontColor([Color.White])
-        .borderRadius('50%')
-        .backgroundColor('#EBAC24')
-        .translate({ x: '-50%' })
-        .position({ bottom: AppStorage.get('BottomRectHeight') as number, left: '50%' })
-        .onClick(() => {
-          const params: Record<string, Object> = {
-            'memoId': '',
-            'userCategory': this.curUserCategory,
-            'systemCategory': this.curSystemCategory ?? '',
-          };
-          this.appPathStack.pushPathByName('MemoEdit', params);
-        });
+      Row() {
+        SymbolGlyph($r('sys.symbol.plus'))
+          .padding(14)
+          .fontSize(24)
+          .fontColor([Color.White])
+          .borderRadius('50%')
+          .backgroundColor('#EBAC24')
+          .onClick(() => {
+            const params: Record<string, Object> = {
+              'memoId': '',
+              'userCategory': this.curUserCategory,
+              'systemCategory': this.curSystemCategory ?? '',
+            };
+            this.appPathStack.pushPathByName('MemoEdit', params);
+          });
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .hitTestBehavior(HitTestMode.None)
+      .position({ bottom: 16 + (AppStorage.get('BottomRectHeight') as number) });
     }
   }
 
