@@ -114,6 +114,30 @@ struct Index {
     return groupedMemo;
   }
 
+  get groupedFlowSections(): WaterFlowSections {
+    const sections = new WaterFlowSections();
+    const headerSection: SectionOptions = {
+      itemsCount: 1,
+      crossCount: 1,
+      rowsGap: 12,
+      columnsGap: 12,
+    };
+    for (const key of this.groupedMemoList.keys()) {
+      sections.push(headerSection);
+      if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
+        const itemsCount = this.groupedMemoList.get(key)!.length;
+        const memoSection: SectionOptions = {
+          itemsCount: itemsCount,
+          crossCount: 2,
+          rowsGap: 12,
+          columnsGap: 12,
+        };
+        sections.push(memoSection);
+      }
+    }
+    return sections;
+  }
+
   get searchMemoList(): Memo[] {
     if (this.isSearching && this.searchKeyWord) {
       const lowerKeyword = this.searchKeyWord.toLowerCase();
@@ -1377,6 +1401,87 @@ struct Index {
   }
 
   @Builder
+  memoGroupGrid() {
+    Scroll(this.cardScroller) {
+      Column() {
+        Row() {
+          this.searchBar();
+        }
+        .width('100%');
+
+        WaterFlow({ sections: this.groupedFlowSections }) {
+          ForEach(
+            Array.from(this.groupedMemoList.keys()),
+            (key: string) => {
+              if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
+                FlowItem() {
+                  this.groupHeader(key);
+                }
+                .width('100%')
+                .margin({ top: 16 })
+
+                ForEach(
+                  this.groupedMemoList.get(key),
+                  (memo: Memo) => {
+                    FlowItem() {
+                      this.gridMemoItem(UIUtils.makeBinding(() => memo));
+                    }
+                    .width('100%');
+                  },
+                  (memo: Memo) => JSON.stringify(memo),
+                );
+              }
+            },
+            (key: string) => key,
+          );
+        }
+        .width('100%')
+        .padding({ bottom: 108 })
+        .scrollBar(BarState.Off)
+        .columnsTemplate('1fr 1fr')
+        .columnsGap(12)
+        .rowsGap(12);
+      }
+      .width('100%')
+      .padding({
+        left: $r('sys.float.padding_level8'),
+        right: $r('sys.float.padding_level8'),
+      });
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .onDidScroll(() => {
+      const yOffset = this.cardScroller.currentOffset().yOffset;
+      if (yOffset > 32 && !this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = true;
+          });
+      }
+    })
+    .onScrollEdge((side: Edge) => {
+      if (side === Edge.Top && this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = false;
+          });
+      }
+    });
+  }
+
+  @Builder
   memoGrid() {
     Scroll(this.cardScroller) {
       Column() {
@@ -1466,7 +1571,11 @@ struct Index {
       this.emptyMemos();
     } else {
       if (this.settingService.isGroupByDate) {
-        this.memoGroupList();
+        if (this.settingService.memoShowMethod === ShowMethodEnum.Grid) {
+          this.memoGroupGrid();
+        } else {
+          this.memoGroupList();
+        }
       } else {
         if (this.settingService.memoShowMethod === ShowMethodEnum.Grid) {
           this.memoGrid();
