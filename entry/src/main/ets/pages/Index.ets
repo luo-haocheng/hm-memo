@@ -459,12 +459,13 @@ struct Index {
       Row() {
         Text('排序方式')
           .fontSize(14)
-          .fontColor(Color.Black);
+          .fontColor($r('sys.color.font_primary'));
 
         Image($r('app.media.chevron_down'))
           .width(20)
           .height(20)
           .backgroundColor(Color.Transparent)
+          .fillColor($r('sys.color.font_primary'))
           .rotate({ angle: this.selectSortMethod ? 180 : 0 });
       }
       .width('100%')
@@ -499,6 +500,7 @@ struct Index {
               .width(20)
               .height(20)
               .backgroundColor(Color.Transparent)
+              .fillColor($r('sys.color.font_primary'))
               .layoutWeight(0);
           }
         }
@@ -522,6 +524,7 @@ struct Index {
               .width(20)
               .height(20)
               .backgroundColor(Color.Transparent)
+              .fillColor($r('sys.color.font_primary'))
               .layoutWeight(0);
           }
         }
@@ -1418,7 +1421,7 @@ struct Index {
                   this.groupHeader(key);
                 }
                 .width('100%')
-                .margin({ top: 16 })
+                .margin({ top: 16 });
 
                 ForEach(
                   this.groupedMemoList.get(key),
