@@ -711,12 +711,16 @@ struct Index {
       .justifyContent(FlexAlign.Start)
       .alignItems(VerticalAlign.Center);
 
-      Text(memo.value.description)
-        .maxLines(2)
-        .fontSize(12)
-        .fontWeight(FontWeight.Regular)
-        .fontColor($r('sys.color.font_secondary'))
-        .textOverflow({ overflow: TextOverflow.Ellipsis });
+      Row() {
+        Text(memo.value.description)
+          .maxLines(2)
+          .fontSize(12)
+          .fontWeight(FontWeight.Regular)
+          .fontColor($r('sys.color.font_secondary'))
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+      }
+      .width('100%')
+      .margin({ left: 12 });
 
       Row() {
         Text(
@@ -724,17 +728,33 @@ struct Index {
             memo.value.createTime :
             memo.value.updateTime
           ))
+          .maxLines(1)
           .fontSize(12)
           .fontWeight(FontWeight.Regular)
-          .fontColor($r('sys.color.font_secondary'));
+          .fontColor($r('sys.color.font_secondary'))
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1);
 
-        Image($r('app.media.dot_grid_1x2'))
-          .width(14)
-          .aspectRatio(1)
-          .backgroundColor(Color.Transparent)
-          .fillColor($r('sys.color.font_secondary'));
+        if (this.isMultiChoice) {
+          Checkbox()
+            .width(16)
+            .aspectRatio(1)
+            .selectedColor('#EBAC24')
+            .select(memo.value.isSelected!!);
+        } else {
+          Image($r('app.media.dot_grid_1x2'))
+            .width(14)
+            .aspectRatio(1)
+            .backgroundColor(Color.Transparent)
+            .fillColor($r('sys.color.font_secondary'))
+            .layoutWeight(0)
+            .onClick(() => {
+              // todo
+            });
+        }
       }
       .width('100%')
+      .padding({ left: 12 })
       .justifyContent(FlexAlign.SpaceBetween);
 
       Row({ space: 5 }) {
@@ -758,7 +778,8 @@ struct Index {
             .height(12)
             .fillColor($r('sys.color.font_secondary'));
         }
-      };
+      }
+      .margin({ left: 12 });
     }
     .padding({
       top: 16,
@@ -766,7 +787,7 @@ struct Index {
       right: 16,
       bottom: 8
     })
-    .borderRadius(12)
+    .borderRadius(16)
     .justifyContent(FlexAlign.Start)
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('sys.color.comp_background_list_card'))
@@ -1237,7 +1258,7 @@ struct Index {
             .alignItems(VerticalAlign.Center)
             .justifyContent(FlexAlign.SpaceBetween);
 
-            List({ space: 12, scroller: this.cardListScroller }) {
+            List({ space: 12 }) {
               ForEach(
                 this.searchMemoList,
                 (memo: Memo) => {
@@ -1281,7 +1302,7 @@ struct Index {
             .layoutWeight(1);
           }
         } else {
-          List({ space: 12, scroller: this.cardListScroller }) {
+          List({ space: 12 }) {
             ForEach(
               this.currentMemoList,
               (memo: Memo) => {
