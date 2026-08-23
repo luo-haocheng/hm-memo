@@ -120,7 +120,6 @@ struct Index {
       itemsCount: 1,
       crossCount: 1,
       rowsGap: 12,
-      columnsGap: 12,
     };
     for (const key of this.groupedMemoList.keys()) {
       sections.push(headerSection);
@@ -136,6 +135,13 @@ struct Index {
         sections.push(memoSection);
       }
     }
+
+    const footerSection: SectionOptions = {
+      itemsCount: 1,
+      crossCount: 1,
+    };
+    sections.push((footerSection));
+
     return sections;
   }
 
@@ -1202,7 +1208,8 @@ struct Index {
     }
     .width('100%')
     .contentEndOffset(108)
-    .scrollBar(BarState.Off);
+    .scrollBar(BarState.Off)
+    .layoutWeight(this.isSearching ? 1 : 0);
   }
 
   @Builder
@@ -1249,7 +1256,8 @@ struct Index {
     }
     .width('100%')
     .contentEndOffset(108)
-    .scrollBar(BarState.Off);
+    .scrollBar(BarState.Off)
+    .layoutWeight(this.isSearching ? 1 : 0);
   }
 
   @Builder
@@ -1312,6 +1320,13 @@ struct Index {
   }
 
   @Builder
+  gridFooter() {
+    Row()
+      .height(108)
+      .width('100%');
+  }
+
+  @Builder
   memoGridGroup() {
     WaterFlow({ sections: this.groupedFlowSections }) {
       ForEach(
@@ -1337,18 +1352,23 @@ struct Index {
         },
         (key: string) => key,
       );
+
+      FlowItem() {
+        this.gridFooter();
+      }
+      .width('100%');
     }
     .width('100%')
-    .padding({ bottom: 108 })
     .scrollBar(BarState.Off)
-    .columnsTemplate('1fr 1fr')
+    .rowsGap(12)
     .columnsGap(12)
-    .rowsGap(12);
+    .columnsTemplate('1fr 1fr')
+    .layoutWeight(this.isSearching ? 1 : 0);
   }
 
   @Builder
   memoGridNormal() {
-    WaterFlow() {
+    WaterFlow({ footer: this.gridFooter() }) {
       ForEach(
         this.currentMemoList,
         (memo: Memo) => {
@@ -1361,11 +1381,11 @@ struct Index {
       );
     }
     .width('100%')
-    .padding({ bottom: 108 })
     .scrollBar(BarState.Off)
-    .columnsTemplate('1fr 1fr')
+    .rowsGap(12)
     .columnsGap(12)
-    .rowsGap(12);
+    .columnsTemplate('1fr 1fr')
+    .layoutWeight(this.isSearching ? 1 : 0);
   }
 
   @Builder
