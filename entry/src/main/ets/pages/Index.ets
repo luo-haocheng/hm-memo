@@ -131,6 +131,7 @@ struct Index {
           crossCount: 2,
           rowsGap: 12,
           columnsGap: 12,
+          margin: { bottom: 16 }
         };
         sections.push(memoSection);
       }
@@ -604,7 +605,7 @@ struct Index {
           });
       }
       .width('100%')
-      .margin({ top: 8, bottom: 12 });
+      .margin({ top: 8, bottom: 16 });
     }
   }
 
@@ -1105,34 +1106,115 @@ struct Index {
   }
 
   @Builder
-  memoGroupList() {
-    Scroll(this.cardScroller) {
-      Column() {
-        Row() {
-          this.searchBar();
-        }
-        .width('100%');
+  searchResult() {
+    if (this.searchMemoList.length > 0) {
+      Row() {
+        Text('备忘')
+          .fontSize(16)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.font_primary'));
 
-        if (this.isSearching && this.searchKeyWord) {
-          if (this.searchMemoList.length > 0) {
-            Row() {
-              Text('备忘')
-                .fontSize(16)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('sys.color.font_primary'));
+        Text(`已找到 ${this.searchMemoList.length} 项`)
+          .fontSize(12)
+          .fontColor($r('sys.color.font_tertiary'));
+      }
+      .width('100%')
+      .margin({ bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
 
-              Text(`已找到 ${this.searchMemoList.length} 项`)
-                .fontSize(12)
-                .fontColor($r('sys.color.font_tertiary'));
+      List({ space: 12 }) {
+        ForEach(
+          this.searchMemoList,
+          (memo: Memo) => {
+            ListItem() {
+              this.listMemoItem(UIUtils.makeBinding(() => memo));
             }
-            .width('100%')
-            .margin({ bottom: 12 })
-            .alignItems(VerticalAlign.Center)
-            .justifyContent(FlexAlign.SpaceBetween);
+            .swipeAction({
+              end: {
+                builder: () => {
+                  if (!this.isMultiChoice) {
+                    if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                      this.deleteMemoEnd(memo);
+                    } else {
+                      this.memoItemEnd(memo);
+                    }
+                  }
+                }
+              }
+            });
+          },
+          (item: Memo) => JSON.stringify(item),
+        );
+      }
+      .width('100%')
+      .contentEndOffset(108)
+      .scrollBar(BarState.Off);
+    } else {
+      Column({ space: 16 }) {
+        Image($r('app.media.search_no_result'))
+          .width(120)
+          .height(120)
+          .fillColor($r('sys.color.font_tertiary'));
 
-            List({ space: 12, scroller: this.cardListScroller }) {
+        Text('没有符合条件的内容')
+          .fontSize(12)
+          .fontColor($r('sys.color.font_tertiary'));
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .layoutWeight(1);
+    }
+  }
+
+  @Builder
+  memoListNormal() {
+    List({ space: 12 }) {
+      ForEach(
+        this.currentMemoList,
+        (memo: Memo) => {
+          ListItem() {
+            this.listMemoItem(UIUtils.makeBinding(() => memo));
+          }
+          .swipeAction({
+            end: {
+              builder: () => {
+                if (!this.isMultiChoice) {
+                  if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+                    this.deleteMemoEnd(memo);
+                  } else {
+                    this.memoItemEnd(memo);
+                  }
+                }
+              }
+            }
+          })
+          .gesture(
+            LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+              .onAction(() => {
+                this.handleLongPress(memo);
+              })
+          );
+        },
+        (item: Memo) => JSON.stringify(item),
+      );
+    }
+    .width('100%')
+    .contentEndOffset(108)
+    .scrollBar(BarState.Off);
+  }
+
+  @Builder
+  memoListGrouped() {
+    List({ space: 12, scroller: this.cardListScroller }) {
+      ForEach(
+        Array.from(this.groupedMemoList.keys()),
+        (key: string) => {
+          if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
+            ListItemGroup({ header: this.groupHeader(key), space: 12 }) {
               ForEach(
-                this.searchMemoList,
+                this.groupedMemoList.get(key),
                 (memo: Memo) => {
                   ListItem() {
                     this.listMemoItem(UIUtils.makeBinding(() => memo));
@@ -1149,117 +1231,29 @@ struct Index {
                         }
                       }
                     }
-                  });
+                  })
+                  .gesture(
+                    LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
+                      .onAction(() => {
+                        this.handleLongPress(memo);
+                      })
+                  );
                 },
-                (item: Memo) => JSON.stringify(item),
+                (memo: Memo) => JSON.stringify(memo),
               );
-            }
-            .width('100%')
-            .contentEndOffset(96)
-            .scrollBar(BarState.Off);
-          } else {
-            Column({ space: 16 }) {
-              Image($r('app.media.search_no_result'))
-                .width(120)
-                .height(120)
-                .fillColor($r('sys.color.font_tertiary'));
-
-              Text('没有符合条件的内容')
-                .fontSize(12)
-                .fontColor($r('sys.color.font_tertiary'));
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .layoutWeight(1);
+            };
           }
-        } else {
-          List({ space: 12, scroller: this.cardListScroller }) {
-            ForEach(
-              Array.from(this.groupedMemoList.keys()),
-              (key: string) => {
-                if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
-                  ListItemGroup({ header: this.groupHeader(key), space: 12 }) {
-                    ForEach(
-                      this.groupedMemoList.get(key),
-                      (memo: Memo) => {
-                        ListItem() {
-                          this.listMemoItem(UIUtils.makeBinding(() => memo));
-                        }
-                        .swipeAction({
-                          end: {
-                            builder: () => {
-                              if (!this.isMultiChoice) {
-                                if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                                  this.deleteMemoEnd(memo);
-                                } else {
-                                  this.memoItemEnd(memo);
-                                }
-                              }
-                            }
-                          }
-                        })
-                        .gesture(
-                          LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                            .onAction(() => {
-                              this.handleLongPress(memo);
-                            })
-                        );
-                      },
-                      (memo: Memo) => JSON.stringify(memo),
-                    );
-                  };
-                }
-              },
-              (key: string) => key,
-            );
-          }
-          .width('100%')
-          .contentEndOffset(96)
-          .scrollBar(BarState.Off);
-        }
-      }
-      .width('100%')
-      .padding({
-        left: $r('sys.float.padding_level8'),
-        right: $r('sys.float.padding_level8'),
-      });
+        },
+        (key: string) => key,
+      );
     }
     .width('100%')
-    .layoutWeight(1)
-    .align(Alignment.Top)
-    .scrollBar(BarState.Off)
-    .onDidScroll(() => {
-      const yOffset = this.cardScroller.currentOffset().yOffset;
-      if (yOffset > 32 && !this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = true;
-          });
-      }
-    })
-    .onScrollEdge((side: Edge) => {
-      if (side === Edge.Top && this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = false;
-          });
-      }
-    });
+    .contentEndOffset(108)
+    .scrollBar(BarState.Off);
   }
 
   @Builder
-  memoList() {
+  memoListView() {
     Scroll(this.cardScroller) {
       Column() {
         Row() {
@@ -1269,142 +1263,113 @@ struct Index {
         .layoutWeight(0);
 
         if (this.isSearching && this.searchKeyWord) {
-          if (this.searchMemoList.length > 0) {
-            Row() {
-              Text('备忘')
-                .fontSize(16)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('sys.color.font_primary'));
-
-              Text(`已找到 ${this.searchMemoList.length} 项`)
-                .fontSize(12)
-                .fontColor($r('sys.color.font_tertiary'));
-            }
-            .width('100%')
-            .margin({ bottom: 12 })
-            .alignItems(VerticalAlign.Center)
-            .justifyContent(FlexAlign.SpaceBetween);
-
-            List({ space: 12 }) {
-              ForEach(
-                this.searchMemoList,
-                (memo: Memo) => {
-                  ListItem() {
-                    this.listMemoItem(UIUtils.makeBinding(() => memo));
-                  }
-                  .swipeAction({
-                    end: {
-                      builder: () => {
-                        if (!this.isMultiChoice) {
-                          if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                            this.deleteMemoEnd(memo);
-                          } else {
-                            this.memoItemEnd(memo);
-                          }
-                        }
-                      }
-                    }
-                  });
-                },
-                (item: Memo) => JSON.stringify(item),
-              );
-            }
-            .width('100%')
-            .contentEndOffset(96)
-            .scrollBar(BarState.Off);
-          } else {
-            Column({ space: 16 }) {
-              Image($r('app.media.search_no_result'))
-                .width(120)
-                .height(120)
-                .fillColor($r('sys.color.font_tertiary'));
-
-              Text('没有符合条件的内容')
-                .fontSize(12)
-                .fontColor($r('sys.color.font_tertiary'));
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
-            .layoutWeight(1);
-          }
+          this.searchResult();
         } else {
-          List({ space: 12 }) {
+          if (this.settingService.isGroupByDate) {
+            this.memoListGrouped();
+          } else {
+            this.memoListNormal();
+          }
+        }
+      }
+      .width('100%')
+      .padding({
+        left: $r('sys.float.padding_level8'),
+        right: $r('sys.float.padding_level8'),
+      });
+    }
+    .width('100%')
+    .layoutWeight(1)
+    .align(Alignment.Top)
+    .scrollBar(BarState.Off)
+    .onDidScroll(() => {
+      const yOffset = this.cardScroller.currentOffset().yOffset;
+      if (yOffset > 32 && !this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = true;
+          });
+      }
+    })
+    .onScrollEdge((side: Edge) => {
+      if (side === Edge.Top && this.isCardListScroll) {
+        this.getUIContext().animateTo(
+          {
+            duration: 300,
+            curve: Curve.EaseOut,
+            playMode: PlayMode.Normal,
+          },
+          () => {
+            this.isCardListScroll = false;
+          });
+      }
+    });
+  }
+
+  @Builder
+  memoGridGroup() {
+    WaterFlow({ sections: this.groupedFlowSections }) {
+      ForEach(
+        Array.from(this.groupedMemoList.keys()),
+        (key: string) => {
+          if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
+            FlowItem() {
+              this.groupHeader(key);
+            }
+            .width('100%');
+
             ForEach(
-              this.currentMemoList,
+              this.groupedMemoList.get(key),
               (memo: Memo) => {
-                ListItem() {
-                  this.listMemoItem(UIUtils.makeBinding(() => memo));
+                FlowItem() {
+                  this.gridMemoItem(UIUtils.makeBinding(() => memo));
                 }
-                .swipeAction({
-                  end: {
-                    builder: () => {
-                      if (!this.isMultiChoice) {
-                        if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                          this.deleteMemoEnd(memo);
-                        } else {
-                          this.memoItemEnd(memo);
-                        }
-                      }
-                    }
-                  }
-                })
-                .gesture(
-                  LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                    .onAction(() => {
-                      this.handleLongPress(memo);
-                    })
-                );
+                .width('100%');
               },
-              (item: Memo) => JSON.stringify(item),
+              (memo: Memo) => JSON.stringify(memo),
             );
           }
-          .width('100%')
-          .contentEndOffset(108)
-          .scrollBar(BarState.Off);
-        }
-      }
-      .width('100%')
-      .padding({
-        left: $r('sys.float.padding_level8'),
-        right: $r('sys.float.padding_level8'),
-      });
+        },
+        (key: string) => key,
+      );
     }
     .width('100%')
-    .layoutWeight(1)
-    .align(Alignment.Top)
+    .padding({ bottom: 108 })
     .scrollBar(BarState.Off)
-    .onDidScroll(() => {
-      const yOffset = this.cardScroller.currentOffset().yOffset;
-      if (yOffset > 32 && !this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = true;
-          });
-      }
-    })
-    .onScrollEdge((side: Edge) => {
-      if (side === Edge.Top && this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = false;
-          });
-      }
-    });
+    .columnsTemplate('1fr 1fr')
+    .columnsGap(12)
+    .rowsGap(12);
   }
 
   @Builder
-  memoGroupGrid() {
+  memoGridNormal() {
+    WaterFlow() {
+      ForEach(
+        this.currentMemoList,
+        (memo: Memo) => {
+          FlowItem() {
+            this.gridMemoItem(UIUtils.makeBinding(() => memo));
+          }
+          .width('100%');
+        },
+        (memo: Memo) => JSON.stringify(memo),
+      );
+    }
+    .width('100%')
+    .padding({ bottom: 108 })
+    .scrollBar(BarState.Off)
+    .columnsTemplate('1fr 1fr')
+    .columnsGap(12)
+    .rowsGap(12);
+  }
+
+  @Builder
+  memoGridView() {
     Scroll(this.cardScroller) {
       Column() {
         Row() {
@@ -1412,105 +1377,15 @@ struct Index {
         }
         .width('100%');
 
-        WaterFlow({ sections: this.groupedFlowSections }) {
-          ForEach(
-            Array.from(this.groupedMemoList.keys()),
-            (key: string) => {
-              if (this.groupedMemoList.get(key) && this.groupedMemoList.get(key)!.length > 0) {
-                FlowItem() {
-                  this.groupHeader(key);
-                }
-                .width('100%')
-                .margin({ top: 16 });
-
-                ForEach(
-                  this.groupedMemoList.get(key),
-                  (memo: Memo) => {
-                    FlowItem() {
-                      this.gridMemoItem(UIUtils.makeBinding(() => memo));
-                    }
-                    .width('100%');
-                  },
-                  (memo: Memo) => JSON.stringify(memo),
-                );
-              }
-            },
-            (key: string) => key,
-          );
+        if (this.isSearching && this.searchKeyWord) {
+          this.searchResult();
+        } else {
+          if (this.settingService.isGroupByDate) {
+            this.memoGridGroup();
+          } else {
+            this.memoGridNormal();
+          }
         }
-        .width('100%')
-        .padding({ bottom: 108 })
-        .scrollBar(BarState.Off)
-        .columnsTemplate('1fr 1fr')
-        .columnsGap(12)
-        .rowsGap(12);
-      }
-      .width('100%')
-      .padding({
-        left: $r('sys.float.padding_level8'),
-        right: $r('sys.float.padding_level8'),
-      });
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .align(Alignment.Top)
-    .scrollBar(BarState.Off)
-    .onDidScroll(() => {
-      const yOffset = this.cardScroller.currentOffset().yOffset;
-      if (yOffset > 32 && !this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = true;
-          });
-      }
-    })
-    .onScrollEdge((side: Edge) => {
-      if (side === Edge.Top && this.isCardListScroll) {
-        this.getUIContext().animateTo(
-          {
-            duration: 300,
-            curve: Curve.EaseOut,
-            playMode: PlayMode.Normal,
-          },
-          () => {
-            this.isCardListScroll = false;
-          });
-      }
-    });
-  }
-
-  @Builder
-  memoGrid() {
-    Scroll(this.cardScroller) {
-      Column() {
-        Row() {
-          this.searchBar();
-        }
-        .width('100%');
-
-        WaterFlow() {
-          ForEach(
-            this.currentMemoList,
-            (memo: Memo) => {
-              FlowItem() {
-                this.gridMemoItem(UIUtils.makeBinding(() => memo));
-              }
-              .width('100%');
-            },
-            (memo: Memo) => JSON.stringify(memo),
-          );
-        }
-        .width('100%')
-        .padding({ bottom: 108 })
-        .scrollBar(BarState.Off)
-        .columnsTemplate('1fr 1fr')
-        .columnsGap(12)
-        .rowsGap(12);
       }
       .width('100%')
       .padding({
@@ -1569,22 +1444,14 @@ struct Index {
   }
 
   @Builder
-  showMemoList() {
+  memoView() {
     if (this.currentMemoList.length === 0) {
       this.emptyMemos();
     } else {
-      if (this.settingService.isGroupByDate) {
-        if (this.settingService.memoShowMethod === ShowMethodEnum.Grid) {
-          this.memoGroupGrid();
-        } else {
-          this.memoGroupList();
-        }
+      if (this.settingService.memoShowMethod === ShowMethodEnum.LIST) {
+        this.memoListView();
       } else {
-        if (this.settingService.memoShowMethod === ShowMethodEnum.Grid) {
-          this.memoGrid();
-        } else {
-          this.memoList();
-        }
+        this.memoGridView();
       }
     }
   }
@@ -2272,7 +2139,7 @@ struct Index {
               }
 
               // 备忘列表
-              this.showMemoList();
+              this.memoView();
 
               // 多选底部工具栏
               this.toolBarBuilder();
