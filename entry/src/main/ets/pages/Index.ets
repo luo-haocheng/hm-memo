@@ -1053,18 +1053,7 @@ struct Index {
             }
             .padding(8)
             .backgroundColor(Color.Transparent)
-            .bindMenu(
-              this.gridMenu(memo.value),
-              {
-                backgroundBlurStyle: BlurStyle.BACKGROUND_THIN,
-                backgroundBlurStyleOptions: {
-                  scale: 0.8,
-                  colorMode: ThemeColorMode.LIGHT,
-                  adaptiveColor: AdaptiveColor.AVERAGE,
-                  policy: BlurStyleActivePolicy.ALWAYS_ACTIVE,
-                },
-              }
-            );
+            .bindMenu(this.gridMenu(memo.value));
           }
         }
         .width('100%')
@@ -1121,6 +1110,14 @@ struct Index {
       } else {
         const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
+      }
+    })
+    .onTouchTestDone((_, recognizers) => {
+      const longPressRecognizer = recognizers.find((recognizer) => {
+        return recognizer.getType() === GestureControl.GestureType.LONG_PRESS_GESTURE;
+      });
+      if (this.isMultiChoice && longPressRecognizer) {
+        longPressRecognizer.preventBegin();
       }
     });
   }
@@ -1227,6 +1224,14 @@ struct Index {
       } else {
         const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
         this.appPathStack.pushPathByName('MemoEdit', params);
+      }
+    })
+    .onTouchTestDone((_, recognizers) => {
+      const longPressRecognizer = recognizers.find((recognizer) => {
+        return recognizer.getType() === GestureControl.GestureType.LONG_PRESS_GESTURE;
+      });
+      if (this.isMultiChoice && longPressRecognizer) {
+        longPressRecognizer.preventBegin();
       }
     });
   }
