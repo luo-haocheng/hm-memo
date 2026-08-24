@@ -332,7 +332,7 @@ struct Index {
       }
     } else if (name === ToolBarName.DELETE) {
       choiceMemos.forEach((memo) => {
-        if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+        if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
           this.memoService.deletePermanently(memo.id, this.kvStore);
         } else {
           this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
@@ -628,7 +628,7 @@ struct Index {
     if (this.curSystemCategory === SystemCategory.LOCKED_MEMO) {
       return false;
     }
-    if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
+    if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
       return false;
     }
     return true;
@@ -661,7 +661,7 @@ struct Index {
   }
 
   currentToolBar = () => {
-    return this.curSystemCategory === SystemCategory.DELETE_MEMO ? DeleteToolBarList : NormalToolBarList;
+    return this.curSystemCategory === SystemCategory.DELETED_MEMO ? DeleteToolBarList : NormalToolBarList;
   };
   isDeselectAll = (name: ToolBarName) => {
     return name === ToolBarName.SELECT_ALL && this.choiceMemoCount === this.currentMemoList.length;
@@ -724,6 +724,140 @@ struct Index {
   }
 
   @Builder
+  normalGridMenu(memo: Memo) {
+    Menu() {
+      MenuItem({
+        startIcon: memo.pinTime === '-1' ? $r('app.media.pin_to_top') : $r('app.media.unpin_to_top'),
+        content: memo.pinTime === '-1' ? '置顶' : '取消置顶'
+      })
+        .onClick(() => {
+          let pinTime = '-1';
+          if (memo.pinTime === '-1') {
+            pinTime = new Date().getTime().toString();
+          }
+
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.pinMemo(memo.id, pinTime, this.kvStore, this.uiContext);
+            });
+        });
+
+      MenuItem({ startIcon: $r('app.media.move_folder'), content: '移动' })
+        .onClick(() => {
+          this.moveMemoList = [memo];
+          this.newCategoryName = '';
+          this.newCategoryColor = '#EBAC24';
+          this.isMoveToNewCategory = false;
+          this.duplicateCategoryName = false;
+          this.uiContext.getPromptAction()
+            .openCustomDialog({
+              builder: () => {
+                this.moveToCategoryDialog();
+              },
+              width: '100%',
+              alignment: DialogAlignment.Bottom,
+              transition: TransitionEffect.SLIDE,
+              keyboardAvoidMode: KeyboardAvoidMode.NONE,
+              offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+            })
+            .then((dialogId: number) => {
+              this.moveToCategoryDialogId = dialogId;
+            })
+            .catch((error: BusinessError) => {
+              console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+            });
+        });
+
+      MenuItem({
+        startIcon: $r('app.media.star'),
+        content: memo.isFavorite ? '取消收藏' : '收藏'
+      })
+        .onClick(() => {
+          memo.isFavorite = !memo.isFavorite;
+          this.memoService.collectMemo(memo.id, memo.isFavorite, this.kvStore, this.uiContext);
+        });
+
+      MenuItem({ startIcon: $r('app.media.trash'), content: '删除' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+            });
+        });
+    }
+    .fontColor($r('sys.color.font_primary'))
+    .font({ size: 14, weight: 600 })
+    .menuItemDivider(
+      {
+        startMargin: LengthMetrics.vp(46),
+        strokeWidth: LengthMetrics.vp(0.5),
+        mode: DividerMode.EMBEDDED_IN_MENU,
+        color: $r('sys.color.comp_divider'),
+      }
+    );
+  }
+
+  @Builder
+  deletedGridMenu(memo: Memo) {
+    Menu() {
+      MenuItem({ startIcon: $r('app.media.arrow_counterclockwise'), content: '恢复' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+            });
+        });
+
+      MenuItem({ startIcon: $r('app.media.trash'), content: '删除' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deletePermanently(memo.id, this.kvStore);
+            });
+        });
+    }
+    .fontColor($r('sys.color.font_primary'))
+    .font({ size: 14, weight: 600 })
+    .menuItemDivider(
+      {
+        startMargin: LengthMetrics.vp(46),
+        strokeWidth: LengthMetrics.vp(0.5),
+        mode: DividerMode.EMBEDDED_IN_MENU,
+        color: $r('sys.color.comp_divider'),
+      }
+    );
+  }
+
+  @Builder
+  gridMenu(memo: Memo) {
+    if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
+      this.deletedGridMenu(memo);
+    } else {
+      this.normalGridMenu(memo);
+    }
+  }
+
+  @Builder
   gridMemoItem(memo: Binding<Memo>) {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
@@ -772,7 +906,7 @@ struct Index {
 
           if (this.isMultiChoice) {
             Checkbox()
-              .width(16)
+              .width(18)
               .aspectRatio(1)
               .selectedColor('#EBAC24')
               .select(memo.value.isSelected!!);
@@ -786,9 +920,18 @@ struct Index {
             }
             .padding(8)
             .backgroundColor(Color.Transparent)
-            .onClick(() => {
-
-            });
+            .bindMenu(
+              this.gridMenu(memo.value),
+              {
+                backgroundBlurStyle: BlurStyle.BACKGROUND_THIN,
+                backgroundBlurStyleOptions: {
+                  scale: 0.8,
+                  colorMode: ThemeColorMode.LIGHT,
+                  adaptiveColor: AdaptiveColor.AVERAGE,
+                  policy: BlurStyleActivePolicy.ALWAYS_ACTIVE,
+                },
+              }
+            );
           }
         }
         .width('100%')
@@ -803,7 +946,7 @@ struct Index {
           }
 
           if (memo.value.pinTime !== '-1') {
-            Image($r('app.media.pin_to_top'))
+            Image($r('app.media.pin_to_top_fill'))
               .width(12)
               .height(12)
               .fillColor($r('sys.color.font_secondary'));
@@ -886,7 +1029,7 @@ struct Index {
             }
 
             if (memo.value.pinTime !== '-1') {
-              Image($r('app.media.pin_to_top'))
+              Image($r('app.media.pin_to_top_fill'))
                 .width(12)
                 .height(12)
                 .fillColor($r('sys.color.font_secondary'));
@@ -942,10 +1085,10 @@ struct Index {
   }
 
   @Builder
-  memoItemEnd(memo: Memo) {
+  normalMemoEnd(memo: Memo) {
     Row({ space: 8 }) {
       // 置顶/取消置顶
-      Image(memo.pinTime === '-1' ? $r('app.media.pin_to_top') : $r('app.media.unpin_to_top'))
+      Image(memo.pinTime === '-1' ? $r('app.media.pin_to_top_fill') : $r('app.media.unpin_to_top_fill'))
         .width(40)
         .height(40)
         .padding(8)
@@ -1058,7 +1201,7 @@ struct Index {
   }
 
   @Builder
-  deleteMemoEnd(memo: Memo) {
+  deletedMemoEnd(memo: Memo) {
     Row({ space: 8 }) {
       // 恢复按钮
       Image($r('app.media.arrow_counterclockwise'))
@@ -1147,10 +1290,10 @@ struct Index {
               end: {
                 builder: () => {
                   if (!this.isMultiChoice) {
-                    if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                      this.deleteMemoEnd(memo);
+                    if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
+                      this.deletedMemoEnd(memo);
                     } else {
-                      this.memoItemEnd(memo);
+                      this.normalMemoEnd(memo);
                     }
                   }
                 }
@@ -1194,10 +1337,10 @@ struct Index {
             end: {
               builder: () => {
                 if (!this.isMultiChoice) {
-                  if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                    this.deleteMemoEnd(memo);
+                  if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
+                    this.deletedMemoEnd(memo);
                   } else {
-                    this.memoItemEnd(memo);
+                    this.normalMemoEnd(memo);
                   }
                 }
               }
@@ -1237,10 +1380,10 @@ struct Index {
                     end: {
                       builder: () => {
                         if (!this.isMultiChoice) {
-                          if (this.curSystemCategory === SystemCategory.DELETE_MEMO) {
-                            this.deleteMemoEnd(memo);
+                          if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
+                            this.deletedMemoEnd(memo);
                           } else {
-                            this.memoItemEnd(memo);
+                            this.normalMemoEnd(memo);
                           }
                         }
                       }
@@ -2064,7 +2207,7 @@ struct Index {
 
           this.systemCategoryItem(
             $r('app.media.trash'),
-            SystemCategory.DELETE_MEMO,
+            SystemCategory.DELETED_MEMO,
             UIUtils.makeBinding(() => this.delMemoCount)
           );
         }

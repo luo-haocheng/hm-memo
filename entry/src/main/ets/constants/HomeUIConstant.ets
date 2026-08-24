@@ -17,7 +17,7 @@ export interface ToolBar {
 export const NormalToolBarList: ToolBar[] = [
   {
     name: ToolBarName.MOVE,
-    icon: $r('app.media.arrow_right_folder_circle'),
+    icon: $r('app.media.move_folder'),
   },
   {
     name: ToolBarName.DELETE,

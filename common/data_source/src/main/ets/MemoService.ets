@@ -224,7 +224,7 @@ export class MemoService {
         return this.memoList.filter(memo => memo.isFavorite);
       case SystemCategory.LOCKED_MEMO:
         return this.memoList.filter(memo => memo.isLocked);
-      case SystemCategory.DELETE_MEMO:
+      case SystemCategory.DELETED_MEMO:
         return this.dumpsters;
     }
   }

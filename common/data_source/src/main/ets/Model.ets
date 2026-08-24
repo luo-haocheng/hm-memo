@@ -5,7 +5,7 @@ export enum SystemCategory {
   ALL_MEMO = '全部备忘',
   FAVORITE_MEMO = '收藏',
   LOCKED_MEMO = '加锁',
-  DELETE_MEMO = '最近删除',
+  DELETED_MEMO = '最近删除',
 }
 
 /**
