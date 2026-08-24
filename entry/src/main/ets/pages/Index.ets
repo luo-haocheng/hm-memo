@@ -259,15 +259,6 @@ struct Index {
     }
   }
 
-  // 备忘长按事件
-  handleLongPress(item: Memo) {
-    if (!this.isMultiChoice) {
-      this.currentMemoList.forEach(memo => memo.isSelected = false);
-      this.isMultiChoice = true;
-      item.isSelected = true;
-    }
-  }
-
   // 全选
   handleChoiceAll() {
     if (this.choiceMemoCount === this.currentMemoList.length) {
@@ -796,7 +787,7 @@ struct Index {
         });
     }
     .fontColor($r('sys.color.font_primary'))
-    .font({ size: 14, weight: 600 })
+    .font({ size: 14, weight: FontWeight.Medium })
     .menuItemDivider(
       {
         startMargin: LengthMetrics.vp(46),
@@ -837,7 +828,7 @@ struct Index {
         });
     }
     .fontColor($r('sys.color.font_primary'))
-    .font({ size: 14, weight: 600 })
+    .font({ size: 14, weight: FontWeight.Medium })
     .menuItemDivider(
       {
         startMargin: LengthMetrics.vp(46),
@@ -854,6 +845,148 @@ struct Index {
       this.deletedGridMenu(memo);
     } else {
       this.normalGridMenu(memo);
+    }
+  }
+
+  @Builder
+  normalMemoCtxMenu(memo: Memo) {
+    Menu() {
+      MenuItem({ content: '多选' })
+        .onClick(() => {
+          this.isMultiChoice = true;
+        });
+
+      MenuItem({ content: '移动' })
+        .onClick(() => {
+          this.moveMemoList = [memo];
+          this.newCategoryName = '';
+          this.newCategoryColor = '#EBAC24';
+          this.isMoveToNewCategory = false;
+          this.duplicateCategoryName = false;
+          this.uiContext.getPromptAction()
+            .openCustomDialog({
+              builder: () => {
+                this.moveToCategoryDialog();
+              },
+              width: '100%',
+              alignment: DialogAlignment.Bottom,
+              transition: TransitionEffect.SLIDE,
+              keyboardAvoidMode: KeyboardAvoidMode.NONE,
+              offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+            })
+            .then((dialogId: number) => {
+              this.moveToCategoryDialogId = dialogId;
+            })
+            .catch((error: BusinessError) => {
+              console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+            });
+        });
+
+      MenuItem({ content: memo.isFavorite ? '取消收藏' : '收藏' })
+        .onClick(() => {
+          memo.isFavorite = !memo.isFavorite;
+          this.memoService.collectMemo(memo.id, memo.isFavorite, this.kvStore, this.uiContext);
+        });
+
+      MenuItem({ content: memo.pinTime === '-1' ? '置顶' : '取消置顶' })
+        .onClick(() => {
+          let pinTime = '-1';
+          if (memo.pinTime === '-1') {
+            pinTime = new Date().getTime().toString();
+          }
+
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.pinMemo(memo.id, pinTime, this.kvStore, this.uiContext);
+            });
+        });
+
+      MenuItem({ content: memo.isLocked ? '移除备忘锁' : '启用备忘锁' })
+        .onClick(() => {
+          memo.isLocked = !memo.isLocked;
+          this.memoService.lockMemo(memo.id, memo.isLocked, this.kvStore, this.uiContext);
+        });
+
+      MenuItem({ content: '删除' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deleteMemoToTrash(memo.id, memo.categoryId, this.kvStore, this.uiContext);
+            });
+        });
+    }
+    .fontColor($r('sys.color.font_primary'))
+    .font({ size: 14, weight: FontWeight.Medium })
+    .menuItemDivider(
+      {
+        strokeWidth: LengthMetrics.vp(0.5),
+        mode: DividerMode.EMBEDDED_IN_MENU,
+        color: $r('sys.color.comp_divider'),
+      }
+    );
+  }
+
+  @Builder
+  deletedMemoCtxMenu(memo: Memo) {
+    Menu() {
+      MenuItem({ content: '多选' })
+        .onClick(() => {
+          this.isMultiChoice = true;
+        });
+
+      MenuItem({ content: '恢复' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.recoverMemo(memo.id, this.kvStore, this.uiContext);
+            });
+        });
+
+      MenuItem({ content: '删除' })
+        .onClick(() => {
+          this.getUIContext().animateTo(
+            {
+              duration: 300,
+              curve: Curve.Ease,
+              playMode: PlayMode.Normal,
+            },
+            () => {
+              this.memoService.deletePermanently(memo.id, this.kvStore);
+            });
+        });
+    }
+    .fontColor($r('sys.color.font_primary'))
+    .font({ size: 14, weight: FontWeight.Medium })
+    .menuItemDivider(
+      {
+        strokeWidth: LengthMetrics.vp(0.5),
+        mode: DividerMode.EMBEDDED_IN_MENU,
+        color: $r('sys.color.comp_divider'),
+      }
+    );
+  }
+
+  @Builder
+  memoCtxMenu(memo: Memo) {
+    if (this.curSystemCategory === SystemCategory.DELETED_MEMO) {
+      this.deletedMemoCtxMenu(memo);
+    } else {
+      this.normalMemoCtxMenu(memo);
     }
   }
 
@@ -975,6 +1108,13 @@ struct Index {
     .justifyContent(FlexAlign.Start)
     .alignItems(HorizontalAlign.Start)
     .backgroundColor($r('sys.color.comp_background_list_card'))
+    .bindContextMenu(
+      this.memoCtxMenu(memo.value),
+      ResponseType.LongPress,
+      {
+        preview: MenuPreviewMode.IMAGE,
+      }
+    )
     .onClick(() => {
       if (this.isMultiChoice) {
         memo.value.isSelected = !memo.value.isSelected;
@@ -1074,6 +1214,13 @@ struct Index {
     .alignItems(VerticalAlign.Center)
     .justifyContent(FlexAlign.SpaceBetween)
     .backgroundColor($r('sys.color.comp_background_list_card'))
+    .bindContextMenu(
+      this.memoCtxMenu(memo.value),
+      ResponseType.LongPress,
+      {
+        preview: MenuPreviewMode.IMAGE
+      }
+    )
     .onClick(() => {
       if (this.isMultiChoice) {
         memo.value.isSelected = !memo.value.isSelected;
@@ -1345,13 +1492,7 @@ struct Index {
                 }
               }
             }
-          })
-          .gesture(
-            LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-              .onAction(() => {
-                this.handleLongPress(memo);
-              })
-          );
+          });
         },
         (item: Memo) => JSON.stringify(item),
       );
@@ -1388,13 +1529,7 @@ struct Index {
                         }
                       }
                     }
-                  })
-                  .gesture(
-                    LongPressGesture({ repeat: false, fingers: 1, duration: 500 })
-                      .onAction(() => {
-                        this.handleLongPress(memo);
-                      })
-                  );
+                  });
                 },
                 (memo: Memo) => JSON.stringify(memo),
               );

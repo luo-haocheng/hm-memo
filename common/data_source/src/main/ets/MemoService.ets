@@ -150,6 +150,21 @@ export class MemoService {
   }
 
   /**
+   * 启用/移除备忘锁
+   */
+  public lockMemo(memoId: string, isLocked: boolean, kvStore?: KVStore, uiContext?: UIContext) {
+    const memo = this.memoList.find(item => item.id === memoId);
+    if (!memo) {
+      return;
+    }
+    memo.isLocked = isLocked;
+
+    if (kvStore && uiContext) {
+      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+    }
+  }
+
+  /**
    * 删除笔记
    */
   public deleteMemoToTrash(id: string, categoryId?: string, kvStore?: KVStore, uiContext?: UIContext) {
