@@ -1127,11 +1127,11 @@ struct Index {
       {
         preview: this.memoPreview(memo.value),
         previewAnimationOptions: {
-          scale: [1.0, 1.0],
+          scale: [1.0, 0.9],
           hoverScale: [1.0, 1.0],
           hoverScaleInterruption: true,
         },
-        layoutRegionMargin: { left: 0, right: 0 },
+        layoutRegionMargin: { left: 16, right: 16 },
       }
     )
     .onClick(() => {
@@ -1247,7 +1247,7 @@ struct Index {
       {
         preview: this.memoPreview(memo.value),
         previewAnimationOptions: {
-          scale: [1.0, 1.0],
+          scale: [1.0, 0.9],
           hoverScale: [1.0, 1.0],
           hoverScaleInterruption: true,
         },
