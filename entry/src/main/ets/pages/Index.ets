@@ -32,6 +32,7 @@ struct Index {
   cardScroller: Scroller = new Scroller();
   cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
+  previewTextController: TextController = new TextController();
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider() settingStore: SettingStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
@@ -991,6 +992,29 @@ struct Index {
   }
 
   @Builder
+  memoPreview(memo: Memo) {
+    Column() {
+      Text(memo.title)
+        .height(40)
+        .width('100%')
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('sys.color.font_primary'))
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+      Text(undefined, { controller: this.previewTextController })
+        .width('100%')
+        .onAppear(() => {
+          this.previewTextController.setStyledString(memo.styledString);
+        });
+    }
+    .padding(16)
+    .height(250)
+    .alignItems(HorizontalAlign.Center)
+    .backgroundColor($r('sys.color.background_primary'));
+  }
+
+  @Builder
   gridMemoItem(memo: Binding<Memo>) {
     Column({ space: 8 }) {
       Row({ space: 8 }) {
@@ -1101,7 +1125,13 @@ struct Index {
       this.memoCtxMenu(memo.value),
       ResponseType.LongPress,
       {
-        preview: MenuPreviewMode.IMAGE,
+        preview: this.memoPreview(memo.value),
+        previewAnimationOptions: {
+          scale: [1.0, 1.0],
+          hoverScale: [1.0, 1.0],
+          hoverScaleInterruption: true,
+        },
+        layoutRegionMargin: { left: 0, right: 0 },
       }
     )
     .onClick(() => {
@@ -1215,7 +1245,13 @@ struct Index {
       this.memoCtxMenu(memo.value),
       ResponseType.LongPress,
       {
-        preview: MenuPreviewMode.IMAGE
+        preview: this.memoPreview(memo.value),
+        previewAnimationOptions: {
+          scale: [1.0, 1.0],
+          hoverScale: [1.0, 1.0],
+          hoverScaleInterruption: true,
+        },
+        layoutRegionMargin: { left: 0, right: 0 },
       }
     )
     .onClick(() => {
