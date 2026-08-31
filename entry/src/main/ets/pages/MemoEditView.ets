@@ -153,9 +153,14 @@ struct MemoEditView {
         }
       } else {
         this.isEditMemo = true;
-        const memo = this.memoService.getMemoById(memoId);
-        if (memo) {
-          this.currentMemo = memo;
+        let currentMemo: Memo | undefined = undefined;
+        if (sysCategory === SystemCategory.DELETED_MEMO) {
+          currentMemo = this.memoService.getDeletedMemoById(memoId);
+        } else {
+          currentMemo = this.memoService.getMemoById(memoId);
+        }
+        if (currentMemo) {
+          this.currentMemo = currentMemo;
         }
       }
     });

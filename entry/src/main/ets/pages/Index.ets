@@ -1138,7 +1138,11 @@ struct Index {
       if (this.isMultiChoice) {
         memo.value.isSelected = !memo.value.isSelected;
       } else {
-        const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
+        const params: Record<string, Object> = {
+          'memoId': memo.value.id,
+          'userCategory': this.curUserCategory,
+          'systemCategory': this.curSystemCategory ?? '',
+        };
         this.appPathStack.pushPathByName('MemoEdit', params);
       }
     })
@@ -1258,7 +1262,11 @@ struct Index {
       if (this.isMultiChoice) {
         memo.value.isSelected = !memo.value.isSelected;
       } else {
-        const params: Record<string, Object> = { 'memoId': memo.value.id, 'curUserCategory': this.curUserCategory };
+        const params: Record<string, Object> = {
+          'memoId': memo.value.id,
+          'userCategory': this.curUserCategory,
+          'systemCategory': this.curSystemCategory ?? '',
+        };
         this.appPathStack.pushPathByName('MemoEdit', params);
       }
     })

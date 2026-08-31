@@ -215,7 +215,18 @@ export class MemoService {
   }
 
   /**
-   *
+   * 根据Id获取回收站备忘
+   */
+  public getDeletedMemoById(id: string): Memo | undefined {
+    if (id === '') {
+      return undefined;
+    }
+
+    return this.dumpsters.find((item) => item.id === id);
+  }
+
+  /**
+   * 根据关键词搜索关联笔记
    */
   public search(keyword: string): Memo[] {
     if (!keyword) {
