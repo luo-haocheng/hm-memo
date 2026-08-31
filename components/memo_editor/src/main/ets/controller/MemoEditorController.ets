@@ -39,15 +39,15 @@ export class MemoEditorController {
   // 段落对齐样式及其点击回调
   alignInfoArr: AlignmentInfo[] = [
     {
-      icon: $r('app.media.ic_alignment_left'),
+      icon: $r('app.media.text_alignleft'),
       value: TextAlign.Start,
     },
     {
-      icon: $r('app.media.ic_alignment_center'),
+      icon: $r('app.media.text_aligncenter'),
       value: TextAlign.Center,
     },
     {
-      icon: $r('app.media.ic_alignment_right'),
+      icon: $r('app.media.text_alignright'),
       value: TextAlign.End,
     },
   ];

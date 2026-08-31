@@ -121,6 +121,7 @@ struct MemoEditView {
     NavDestination() {
       Column() {
         MemoEditorArea({
+          isMemoSaved: this.isMemoSaved,
           memoTitle: this.currentMemo.title,
           memoContent: this.currentMemo.styledString,
           titleChange: (title: string) => {
