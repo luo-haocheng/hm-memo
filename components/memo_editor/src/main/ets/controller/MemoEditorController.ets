@@ -3,6 +3,7 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord } from '../model/ChangeRecord';
+import { display } from '@kit.ArkUI';
 
 @ObservedV2
 export class MemoEditorController {
@@ -58,8 +59,8 @@ export class MemoEditorController {
     if (this.currRecordIdx < 1) {
       return;
     }
-    // todo
     // this.contentController.setStyledString(this.historyRecords[--this.currRecordIdx].styledString);
+    // todo
   }
 
   /**
@@ -69,16 +70,17 @@ export class MemoEditorController {
     if (this.currRecordIdx >= this.historyRecords.length - 1) {
       return;
     }
-    // todo
     // this.contentController.setStyledString(this.historyRecords[++this.currRecordIdx].styledString);
+    // todo
   }
 
   /**
    * 增加操作记录
    */
   addHistoryRecord(styledString: MutableStyledString) {
-    this.historyRecords = this.historyRecords.slice(0, ++this.currRecordIdx);
-    this.historyRecords.push(new ChangeRecord(styledString));
+    // this.historyRecords = this.historyRecords.slice(0, ++this.currRecordIdx);
+    // this.historyRecords.push(new ChangeRecord(styledString));
+    // todo
   }
 
   /**
@@ -238,47 +240,46 @@ export class MemoEditorController {
         imageSource.release();
       }
       if (imageFile) {
-        fileIo.closeSync(imageFile);
+        fileIo.close(imageFile)
+          .catch((err: BusinessError) => {
+            console.error(`Failed to close image file ${imageFile?.path}. Cause: ${JSON.stringify(err)}`);
+          });
       }
     }
   }
 
   private addImage(pixelMap: image.PixelMap, uiContext: UIContext) {
-    // try {
-    //   // 获取图片信息
-    //   const info = pixelMap.getImageInfoSync();
-    //   let width = info.size.width;
-    //   let height = info.size.height;
-    //   // 宽度超过最大尺寸时，等比例缩放
-    //   const displayWidth = uiContext.px2vp(display.getDefaultDisplaySync().width) * 0.9;
-    //   if (width > displayWidth) {
-    //     width = displayWidth;
-    //     height = width / info.size.width * height;
-    //   }
-    //   // 创建图片富文本对象
-    //   const imageStyledString = new MutableStyledString(new ImageAttachment({
-    //     value: pixelMap,
-    //     objectFit: ImageFit.Auto,
-    //     size: { width: width, height: height },
-    //     layoutStyle: { borderRadius: LengthMetrics.vp(12), margin: { top: 12, bottom: 12 } },
-    //   }));
-    //   // 获取当前的富文本内容
-    //   const styledString = this.contentController.getStyledString();
-    //   // 获取当前光标位置
-    //   const caretOffset = this.contentController.getCaretOffset();
-    //   // 在当前位置插入图片
-    //   styledString.insertStyledString(caretOffset, imageStyledString);
-    //   // 添加图片后自动向下插入一行
-    //   styledString.insertString(caretOffset + 1, '\n');
-    //   // 将修改后的属性字符串设置到组件上显示
-    //   this.contentController.setStyledString(styledString);
-    //   // 移动光标到图片后
-    //   this.contentController.setCaretOffset(caretOffset + 2);
-    //   // 添加操作记录历史
-    //   this.addHistoryRecord(styledString);
-    // } catch (error) {
-    //   console.error(`Failed to add image to styled string. Cause: ${JSON.stringify(error)}`);
-    // }
-    // todo
+    try {
+      // 获取图片信息
+      const info = pixelMap.getImageInfoSync();
+      let width = info.size.width;
+      let height = info.size.height;
+      // 宽度超过最大尺寸时，等比例缩放
+      const displayWidth = uiContext.px2vp(display.getDefaultDisplaySync().width) * 0.9;
+      if (width > displayWidth) {
+        width = displayWidth;
+        height = width / info.size.width * height;
+      }
+      // 获取当前光标位置
+      const caretOffset = this.contentController.getCaretOffset();
+      // 图片选项
+      const imageSpanOptions: RichEditorImageSpanOptions = {
+        offset: caretOffset,
+        imageStyle: {
+          size: [width, height],
+          objectFit: ImageFit.Auto,
+          layoutStyle: { borderRadius: 12, margin: { top: 12, bottom: 12 } },
+        }
+      };
+      // 添加图片
+      this.contentController.addImageSpan(pixelMap, imageSpanOptions);
+      // 在图片后插入一行（图片独占一个段落）
+      this.contentController.addTextSpan('\n', { offset: caretOffset + 1 });
+      // 添加操作记录历史
+      // this.addHistoryRecord(styledString);
+      // todo
+    } catch (error) {
+      console.error(`Failed to add image to styled string. Cause: ${JSON.stringify(error)}`);
+    }
   }
 }
