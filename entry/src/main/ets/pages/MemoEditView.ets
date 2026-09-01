@@ -95,24 +95,25 @@ struct MemoEditView {
    * 保存笔记
    */
   async saveMemo(): Promise<boolean> {
-    let styledString: MutableStyledString = this.editorController.contentController.getStyledString();
-    let content = styledString.getString();
-    // 若新增笔记，内容和标题为空，不保存
-    // 修改笔记，内容和标题为空，按返回无响应
-    if (content === '' && this.memoTitle === '') {
-      return this.isEditMemo ? false : true;
-    }
-
-    if (this.isEditMemo) {
-      this.currentMemo.updateContent(styledString, this.memoTitle);
-      this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
-    } else {
-      this.currentMemo.title = this.memoTitle;
-      this.currentMemo.styledString = this.editorController.contentController.getStyledString();
-      this.currentMemo.description = this.currentMemo.styledString.getString();
-      this.memoService.addMemo(this.currentMemo, this.kvStore, this.uiContext);
-      this.isEditMemo = true;
-    }
+    // let styledString: MutableStyledString = this.editorController.contentController.getStyledString();
+    // let content = styledString.getString();
+    // // 若新增笔记，内容和标题为空，不保存
+    // // 修改笔记，内容和标题为空，按返回无响应
+    // if (content === '' && this.memoTitle === '') {
+    //   return this.isEditMemo ? false : true;
+    // }
+    //
+    // if (this.isEditMemo) {
+    //   this.currentMemo.updateContent(styledString, this.memoTitle);
+    //   this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
+    // } else {
+    //   this.currentMemo.title = this.memoTitle;
+    //   this.currentMemo.styledString = this.editorController.contentController.getStyledString();
+    //   this.currentMemo.description = this.currentMemo.styledString.getString();
+    //   this.memoService.addMemo(this.currentMemo, this.kvStore, this.uiContext);
+    //   this.isEditMemo = true;
+    // }
+    // todo
 
     return true;
   }

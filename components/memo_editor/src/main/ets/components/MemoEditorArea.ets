@@ -1,7 +1,6 @@
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
-import { LengthMetrics } from '@kit.ArkUI';
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -27,7 +26,7 @@ export struct MemoEditorArea {
 
         Row() {
           Slider({
-            value: this.controller.fontSize.value,
+            value: this.controller.fontSize,
             min: 14, // 滑动最小值
             max: 30, // 滑动最大值
             step: 2,
@@ -40,8 +39,12 @@ export struct MemoEditorArea {
             .blockSize({ width: 12, height: 12 })
             .blockStyle({ type: SliderBlockType.IMAGE, image: $r('app.media.font_setting') })
             .onChange((value: number) => {
-              this.controller.fontSize = LengthMetrics.vp(value);
-              this.updateFontStyle();
+              // todo
+              this.controller.fontSize = value;
+              this.controller.updateTextStyle({
+                fontSize: this.controller.fontSize,
+                lineHeight: this.controller.fontSize * 1.5,
+              });
             });
         }
         .width('90%');
@@ -74,8 +77,11 @@ export struct MemoEditorArea {
                 .borderColor(this.controller.colorIdx === index ? Color.Red : Color.Black);
             }
             .onClick(() => {
+              // todo
               this.controller.colorIdx = index;
-              this.updateFontStyle();
+              this.controller.updateTextStyle({
+                fontColor: COLOR_LIST[this.controller.colorIdx]
+              });
             });
           },
           (color: ResourceColor) => JSON.stringify(color),
@@ -102,7 +108,7 @@ export struct MemoEditorArea {
             .fillColor($r('sys.color.font_primary'))
             .onClick(() => {
               this.controller.alignStyle = item.value;
-              this.controller.setParagraphStyle(new ParagraphStyle({ textAlign: this.controller.alignStyle }));
+              this.controller.updateParagraphStyle({ textAlign: this.controller.alignStyle });
             });
         },
         (item: AlignmentInfo) => JSON.stringify(item)
@@ -136,7 +142,9 @@ export struct MemoEditorArea {
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
           this.controller.isBold = !this.controller.isBold;
-          this.updateFontStyle();
+          this.controller.updateTextStyle({
+            fontWeight: this.controller.isBold ? FontWeight.Bold : FontWeight.Normal
+          });
         });
 
       // 斜体
@@ -145,7 +153,9 @@ export struct MemoEditorArea {
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
           this.controller.isItalics = !this.controller.isItalics;
-          this.updateFontStyle();
+          this.controller.updateTextStyle({
+            fontStyle: this.controller.isItalics ? FontStyle.Italic : FontStyle.Normal
+          });
         });
 
       // 下划线
@@ -155,7 +165,9 @@ export struct MemoEditorArea {
         .onClick(() => {
           this.controller.isUnderline = !this.controller.isUnderline;
           let decoration = this.controller.isUnderline ? TextDecorationType.Underline : TextDecorationType.None;
-          this.controller.setTextStyle(StyledStringKey.DECORATION, new DecorationStyle({ type: decoration }));
+          this.controller.updateTextStyle({
+            decoration: { type: decoration, }
+          });
         });
 
       // 段落对齐
@@ -182,17 +194,6 @@ export struct MemoEditorArea {
     .width('80%')
     .borderRadius('50%')
     .backgroundColor($r('sys.color.background_tertiary'));
-  }
-
-  private updateFontStyle() {
-    this.controller.setTextStyle(StyledStringKey.FONT, new TextStyle({
-      fontStyle: this.controller.isItalics ? FontStyle.Italic : FontStyle.Normal,
-      fontWeight: this.controller.isBold ? FontWeight.Bold : FontWeight.Normal,
-      fontColor: COLOR_LIST[this.controller.colorIdx],
-      fontSize: this.controller.fontSize,
-    }));
-    this.controller.setTextStyle(StyledStringKey.LINE_HEIGHT,
-      new LineHeightStyle(LengthMetrics.vp(this.controller.fontSize.value * 1.5)));
   }
 
   build() {
@@ -236,14 +237,16 @@ export struct MemoEditorArea {
                 fontColor: $r('sys.color.font_primary'),
               });
               // 注册编辑区内容改变回调
-              this.controller.contentController.onContentChanged({
-                onDidChange: () => {
-                  this.controller.onContentChanged();
-                }
-              });
+              // this.controller.contentController.onContentChanged({
+              //   onDidChange: () => {
+              //     this.controller.onContentChanged();
+              //   }
+              // });
+              // todo
               // 设置备忘内容，并添加到操作记录。
-              this.controller.contentController.setStyledString(this.memoContent);
-              this.controller.addHistoryRecord(this.memoContent);
+              // this.controller.contentController.setStyledString(this.memoContent);
+              // this.controller.addHistoryRecord(this.memoContent);
+              // todo
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
