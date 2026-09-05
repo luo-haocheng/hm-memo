@@ -84,17 +84,6 @@ export class MemoEditorController {
   }
 
   /**
-   * 当内容发生改变是，记录用户操作。
-   */
-  onContentChanged() {
-    // 获得当前显示属性字符串
-    // const styledString = this.contentController.getStyledString();
-    // 添加操作记录历史
-    // this.addHistoryRecord(styledString);
-    // todo
-  }
-
-  /**
    * 设置文本样式
    */
   updateTextStyle(textStyle: RichEditorTextStyle) {

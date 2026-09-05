@@ -236,17 +236,6 @@ export struct MemoEditorArea {
                 lineHeight: DEFAULT_FONT_SIZE * 1.5,
                 fontColor: $r('sys.color.font_primary'),
               });
-              // 注册编辑区内容改变回调
-              // this.controller.contentController.onContentChanged({
-              //   onDidChange: () => {
-              //     this.controller.onContentChanged();
-              //   }
-              // });
-              // todo
-              // 设置备忘内容，并添加到操作记录。
-              // this.controller.contentController.setStyledString(this.memoContent);
-              // this.controller.addHistoryRecord(this.memoContent);
-              // todo
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
