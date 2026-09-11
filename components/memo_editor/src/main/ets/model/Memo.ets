@@ -1,3 +1,20 @@
+import image from '@ohos.multimedia.image';
+import { fileIo } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+
+const RESOURCE_IMG_RIGHT_MARGIN = 8;
+const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
+
+export interface MemoBlock {
+  value: string;
+  offset: number;
+  type: 'text' | 'image' | 'builder';
+  imgSource?: 'file' | 'resource';
+  textStyle?: RichEditorTextStyle;
+  imageStyle?: RichEditorImageSpanStyle;
+  paragraphStyle?: RichEditorParagraphStyle;
+}
+
 @ObservedV2
 export class Memo {
   @Trace title: string = '';
@@ -7,32 +24,264 @@ export class Memo {
   @Trace isFavorite: boolean = false;
   @Trace isSelected: boolean = false;
   id: string = '';
-  categoryId: string = '-1';
   createTime: string = '';
   updateTime: string = '';
-  styledString: MutableStyledString;
-  serializedStyledString: string;
+  categoryId: string = '-1';
+  memoBlockArr: Array<MemoBlock> = [];
 
-  constructor(styledString: MutableStyledString, title?: string, categoryId?: string) {
-    this.styledString = styledString;
-    this.serializedStyledString = '';
+  constructor(title?: string, categoryId?: string) {
     this.title = title || '';
     this.categoryId = categoryId || '';
     this.id = new Date().getTime().toString();
     this.createTime = new Date().getTime().toString();
     this.updateTime = this.createTime;
-    this.description = this.styledString.getString();
+    // this.description = this.styledString.getString();
   }
 
-  updateContent(styledString: MutableStyledString, title?: string, category?: string): boolean {
-    if (!styledString) {
-      return false;
+  async updateContent(spanResult: Array<RichEditorSpan>, uiContext: UIContext) {
+    const memoBlockArr: Array<MemoBlock> = [];
+    for (const span of spanResult) {
+      // 图片Span信息
+      const imageSpan = span as RichEditorImageSpanResult;
+      if (imageSpan.imageStyle !== undefined) {
+        const imageSpan = span as RichEditorImageSpanResult;
+        if (imageSpan.imageStyle !== undefined) {
+          const imageBlock = await this.mapImageSpan2Block(imageSpan, uiContext);
+          if (imageBlock) {
+            memoBlockArr.push(imageBlock);
+          }
+        }
+        continue;
+      }
+      // 文本Span信息
+      const textSpan = span as RichEditorTextSpanResult;
+      if (textSpan.textStyle !== undefined) {
+        const textBlock = this.mapTextSpan2Block(textSpan);
+        memoBlockArr.push(textBlock);
+        continue;
+      }
     }
-    this.styledString = styledString;
-    this.title = title || this.title;
-    this.categoryId = category || this.categoryId;
+
+    this.memoBlockArr = memoBlockArr;
     this.updateTime = new Date().getTime().toString();
-    this.description = this.styledString.getString();
-    return true;
+  }
+
+  async rebuildContent(controller: RichEditorController) {
+    for (const block of this.memoBlockArr) {
+      if (block.type === 'text') {
+        const options = this.mapBlock2TextSpan(block);
+        controller.addTextSpan(block.value, options);
+      } else if (block.type === 'image') {
+        console.info(`Image Block 1: ${JSON.stringify(block)}`);
+        const options = this.mapBlock2ImageSpan(block);
+        if (block.imgSource === 'resource') {
+          // todo
+          // const resource = this.BUILTIN_IMAGES[block.value];
+          // this.controller.addImageSpan(resource, options);
+        } else if (block.imgSource === 'file') {
+          const pixelMap = this.loadImage(block.value);
+          controller.addImageSpan(pixelMap, options);
+          pixelMap.release();
+        }
+      }
+    }
+  }
+
+  private parseResourceIdFromUri(uri: string): number | undefined {
+    const match = uri.match(/resource:\/\/\/(\d+)/);
+    return match ? Number(match[1]) : undefined;
+  }
+
+  private getImgMargin(imgSource: 'resource' | 'file'): Margin {
+    const margin: Margin = {};
+    if (imgSource === 'resource') {
+      margin.right = RESOURCE_IMG_RIGHT_MARGIN;
+    } else if (imgSource === 'file') {
+      margin.top = PIXELMAP_IMG_VERTICAL_MARGIN;
+      margin.bottom = PIXELMAP_IMG_VERTICAL_MARGIN;
+    }
+    return margin;
+  }
+
+  private async savePixelMapToFile(pixelMap: image.PixelMap, uiContext: UIContext): Promise<string | undefined> {
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('Failed to get host context when saving pixelmap.');
+      return undefined;
+    }
+    const dir = `${context.filesDir}/memo_images`;
+    try {
+      if (!fileIo.accessSync(dir)) {
+        fileIo.mkdirSync(dir, true);
+      }
+    } catch (error) {
+      console.error(`Failed to access directory: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return undefined;
+    }
+
+    let file: fileIo.File | undefined;
+    let packer: image.ImagePacker | undefined;
+    const path = `${dir}/${util.generateRandomUUID()}.png`;
+    try {
+      packer = image.createImagePacker();
+      file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
+      await packer.packToFile(pixelMap, file.fd, { format: 'image/png', quality: 100 });
+    } catch (error) {
+      console.error(`Failed to pack pixelmap to file: ${path}. Cause: ${JSON.stringify(error)}`);
+      return undefined;
+    } finally {
+      if (packer) {
+        packer.release();
+      }
+      if (file) {
+        fileIo.close(file)
+          .catch((error: BusinessError) => {
+            console.error(`Failed to close file: ${path}. Cause: ${JSON.stringify(error)}`);
+          });
+      }
+    }
+
+    return path;
+  }
+
+  private async mapImageSpan2Block(imageSpan: RichEditorImageSpanResult,
+    uiContext: UIContext): Promise<MemoBlock | undefined> {
+    const spanSize = imageSpan.imageStyle.size;
+
+    let value = '';
+    let imgSource: 'resource' | 'file' | undefined = undefined;
+    let imgSize: [number, number] = [uiContext.px2vp(spanSize[0]), uiContext.px2vp(spanSize[1])];
+    const pixelMap = imageSpan.valuePixelMap;
+    const resourceStr = imageSpan.valueResourceStr;
+    if (resourceStr) {
+      if (typeof resourceStr === 'string' && resourceStr.startsWith('resource:///')) {
+        imgSource = 'resource';
+        // todo
+        // imgSize[0] -= this.RESOURCE_IMG_RIGHT_MARGIN;
+        // const resId = this.parseResourceIdFromUri(resourceStr);
+        // if (resId) {
+        //   value = this.resourceNameById.get(resId) ?? '';
+        // }
+      } else {
+        return undefined;
+      }
+    } else if (pixelMap) {
+      imgSource = 'file';
+      imgSize[1] -= 2 * PIXELMAP_IMG_VERTICAL_MARGIN;
+      const savedPath = await this.savePixelMapToFile(pixelMap, uiContext);
+      if (!savedPath) {
+        // 写盘失败：丢弃这张图，避免把坏路径存进 MemoBlock
+        return undefined;
+      }
+      value = savedPath;
+    } else {
+      return undefined;
+    }
+
+    return {
+      value: value,
+      type: 'image',
+      imgSource: imgSource,
+      offset: imageSpan.spanPosition.spanRange[0],
+      imageStyle: {
+        size: imgSize,
+        objectFit: imageSpan.imageStyle.objectFit,
+        verticalAlign: imageSpan.imageStyle.verticalAlign,
+        layoutStyle: {
+          margin: this.getImgMargin(imgSource),
+          borderRadius: imageSpan.imageStyle.layoutStyle?.borderRadius,
+        },
+      }
+    };
+  }
+
+  private normalizeColor(color: ResourceColor): string | undefined {
+    if (typeof color === 'string') {
+      return color;
+    }
+    if (typeof color === 'number') {
+      if (color > 0xFFFFFF) {
+        // ARGB：保留 alpha 通道
+        return `#${color.toString(16).padStart(8, '0').toUpperCase()}`;
+      }
+      // RGB
+      return `#${color.toString(16).padStart(6, '0').toUpperCase()}`;
+    }
+    // object（Resource）：无法安全还原，回落默认
+    return undefined;
+  }
+
+  private fontWeightResult2Value(result: number): FontWeight | number {
+    switch (result) {
+      case 9:
+        return FontWeight.Bold;
+      case 10:
+        return FontWeight.Normal;
+      case 11:
+        return FontWeight.Bolder;
+      case 12:
+        return FontWeight.Lighter;
+      case 13:
+        return FontWeight.Medium;
+      case 14:
+        return FontWeight.Regular;
+      default:
+        return (result + 1) * 100; // 0~8 对应 100~900
+    }
+  }
+
+  private mapTextSpan2Block(textSpan: RichEditorTextSpanResult): MemoBlock {
+    return {
+      type: 'text',
+      value: textSpan.value,
+      offset: textSpan.spanPosition.spanRange[0],
+      textStyle: {
+        fontSize: textSpan.textStyle.fontSize,
+        fontStyle: textSpan.textStyle.fontStyle,
+        fontFamily: textSpan.textStyle.fontFamily,
+        decoration: textSpan.textStyle.decoration ?
+          {
+            type: textSpan.textStyle.decoration.type,
+            color: textSpan.textStyle.decoration.color,
+          } : undefined,
+        fontColor: this.normalizeColor(textSpan.textStyle.fontColor),
+        fontWeight: this.fontWeightResult2Value(textSpan.textStyle.fontWeight),
+      },
+      paragraphStyle: textSpan.paragraphStyle,
+    };
+  }
+
+  private mapBlock2TextSpan(block: MemoBlock): RichEditorTextSpanOptions {
+    return {
+      style: block.textStyle,
+      paragraphStyle: block.paragraphStyle,
+    };
+  }
+
+  private mapBlock2ImageSpan(block: MemoBlock): RichEditorImageSpanOptions {
+    return { imageStyle: block.imageStyle };
+  }
+
+  private loadImage(uri: string): image.PixelMap {
+    let imageSource: image.ImageSource | undefined;
+    let imageFile: fileIo.File | undefined;
+    try {
+      imageFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      imageSource = image.createImageSource(imageFile.fd);
+      return imageSource.createPixelMapSync();
+    } catch (error) {
+      console.error(`Failed to create pixelmap when load image. Cause: ${JSON.stringify(error)}`);
+      throw new Error(error);
+    } finally {
+      if (imageSource) {
+        imageSource.release();
+      }
+      if (imageFile) {
+        fileIo.close(imageFile)
+          .catch((err: BusinessError) => {
+            console.error(`Failed to close image file ${imageFile?.path}. Cause: ${JSON.stringify(err)}`);
+          });
+      }
+    }
   }
 }

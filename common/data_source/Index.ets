@@ -1,3 +1,5 @@
+export { KVStore } from './src/main/ets/KVStore';
+
 export { MemoService } from './src/main/ets/MemoService';
 
 export { CategoryService } from './src/main/ets/CategoryService';

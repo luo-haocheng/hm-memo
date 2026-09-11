@@ -1,7 +1,7 @@
 import { Memo } from 'memo_editor';
-import { KVStore } from 'serializer';
 import {
   CategoryService,
+  KVStore,
   MemoService,
   SettingService,
   SettingStore,
@@ -32,7 +32,7 @@ struct Index {
   cardScroller: Scroller = new Scroller();
   cardListScroller: ListScroller = new ListScroller();
   uiContext: UIContext = this.getUIContext() as UIContext;
-  previewTextController: TextController = new TextController();
+  previewTextController: RichEditorController = new RichEditorController();
   @Provider() kvStore: KVStore | undefined = undefined;
   @Provider() settingStore: SettingStore | undefined = undefined;
   @Provider('appPathStack') appPathStack: NavPathStack = new NavPathStack();
@@ -1002,14 +1002,17 @@ struct Index {
         .fontColor($r('sys.color.font_primary'))
         .textOverflow({ overflow: TextOverflow.Ellipsis });
 
-      Text(undefined, { controller: this.previewTextController })
+      RichEditor({ controller: this.previewTextController })
         .width('100%')
-        .onAppear(() => {
-          this.previewTextController.setStyledString(memo.styledString);
+        .barState(BarState.Off)
+        .padding({ left: 0, right: 0 })
+        .hitTestBehavior(HitTestMode.None)
+        .onReady(() => {
+          memo.rebuildContent(this.previewTextController);
         });
     }
     .padding(16)
-    .height(250)
+    .height(300)
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('sys.color.background_primary'));
   }
@@ -2302,7 +2305,7 @@ struct Index {
             .height(24)
             .fillColor(Color.Gray)
             .onClick(() => {
-              this.memoService.updateMemoCategory(category.value.id, this.kvStore!, this.uiContext);
+              this.memoService.updateMemoCategory(category.value.id, this.kvStore!);
               this.categoryService.deleteCategoryById(category.value.id, this.kvStore!);
               if (category.value.id === this.curUserCategory.id) {
                 this.curUserCategory = this.categoryService.getDefaultCategory();

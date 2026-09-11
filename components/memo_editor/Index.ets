@@ -1,4 +1,4 @@
-export { Memo } from './src/main/ets/model/Memo';
+export { Memo, MemoBlock } from './src/main/ets/model/Memo';
 
 export { MemoEditorArea } from './src/main/ets/components/MemoEditorArea';
 

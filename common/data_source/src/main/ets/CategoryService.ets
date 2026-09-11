@@ -1,5 +1,5 @@
 import { SystemCategory, UserCategory } from './Model';
-import { KVStore } from 'serializer';
+import { KVStore } from 'data_source';
 import { Memo } from 'memo_editor';
 
 /**

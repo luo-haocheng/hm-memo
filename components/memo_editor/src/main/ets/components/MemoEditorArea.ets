@@ -1,13 +1,14 @@
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
+import { Memo } from '../model/Memo';
 
 @ComponentV2
 export struct MemoEditorArea {
   @Local isEditing: boolean = false;
   @Param @Require isMemoSaved: boolean;
   @Param @Once @Require memoTitle: string;
-  @Param @Once @Require memoContent: MutableStyledString;
+  @Param @Once @Require editingMemo: Memo;
   @Event titleChange: (title: string) => void = () => {
   };
   @Event saveStatusChange: (isSaved: boolean) => void = () => {
@@ -236,6 +237,8 @@ export struct MemoEditorArea {
                 lineHeight: DEFAULT_FONT_SIZE * 1.5,
                 fontColor: $r('sys.color.font_primary'),
               });
+
+              this.editingMemo.rebuildContent(this.controller.contentController);
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;

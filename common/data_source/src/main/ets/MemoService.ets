@@ -1,5 +1,5 @@
 import { Memo } from 'memo_editor';
-import { KVStore, SerializeUtil } from 'serializer';
+import { KVStore } from 'data_source';
 import { CategoryService } from './CategoryService';
 import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
 import { UIContext } from '@kit.ArkUI';
@@ -27,9 +27,9 @@ export class MemoService {
     if (dataList) {
       for (let i = 0; i < dataList.length; i++) {
         const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
-        let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
-        const memo = this.constructMemo(mss, serializedMemo);
+        const memo = this.constructMemo(serializedMemo);
         await this.addMemo(memo);
+
         console.info(`Load effective memo ${memo.id} success.`);
       }
     }
@@ -43,8 +43,7 @@ export class MemoService {
     if (dataList) {
       for (let i = 0; i < dataList.length; i++) {
         const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
-        let mss = await SerializeUtil.deserialize(serializedMemo.serializedStyledString);
-        const memo = this.constructMemo(mss, serializedMemo);
+        const memo = this.constructMemo(serializedMemo);
         this.dumpsters.push(memo);
 
         console.info(`Load delete memo ${memo.id} success.`);
@@ -64,7 +63,7 @@ export class MemoService {
     }
 
     if (kvStore && uiContext) {
-      await putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      await putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
@@ -76,7 +75,7 @@ export class MemoService {
     this.memoList.splice(index, 1, memo);
 
     if (kvStore && uiContext) {
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
@@ -101,21 +100,21 @@ export class MemoService {
     // 持久化
     if (kvStore && uiContext) {
       deleteMemoInKvStore(id, 'DeleteMemo', kvStore);
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
   /**
    * 移动笔记分类
    */
-  public updateMemoCategory(categoryId: string, kvStore: KVStore, uiContext: UIContext) {
+  public updateMemoCategory(categoryId: string, kvStore: KVStore) {
     this.memoList
       .filter(memo => memo.categoryId === categoryId)
       .forEach(memo => {
         this.categoryService.moveCategory(memo, '-1');
         memo.categoryId = '-1';
         deleteMemoInKvStore(memo.id, 'EffectiveMemo', kvStore);
-        putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+        putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
       });
   }
 
@@ -130,7 +129,7 @@ export class MemoService {
     memo.isFavorite = isFavorite;
 
     if (kvStore && uiContext) {
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
@@ -145,7 +144,7 @@ export class MemoService {
     memo.pinTime = pinTime;
 
     if (kvStore && uiContext) {
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
@@ -160,7 +159,7 @@ export class MemoService {
     memo.isLocked = isLocked;
 
     if (kvStore && uiContext) {
-      putMemoInKvStore(memo, uiContext, kvStore, 'EffectiveMemo');
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
 
@@ -186,7 +185,7 @@ export class MemoService {
     // 从有效备忘持久化中删除，持久化到删除备忘
     if (kvStore && uiContext) {
       deleteMemoInKvStore(id, 'EffectiveMemo', kvStore);
-      putMemoInKvStore(delMemo, uiContext, kvStore, 'DeleteMemo');
+      putMemoInKvStore(delMemo, kvStore, 'DeleteMemo');
     }
   }
 
@@ -301,8 +300,8 @@ export class MemoService {
     return this.dumpsters;
   }
 
-  private constructMemo(value: MutableStyledString, serializedMemo: Memo) {
-    const memo = new Memo(value);
+  private constructMemo(serializedMemo: Memo) {
+    const memo = new Memo();
     memo.id = serializedMemo.id;
     memo.title = serializedMemo.title;
     memo.pinTime = serializedMemo.pinTime;
@@ -312,6 +311,7 @@ export class MemoService {
     memo.createTime = serializedMemo.createTime;
     memo.updateTime = serializedMemo.updateTime;
     memo.description = serializedMemo.description;
+    memo.memoBlockArr = serializedMemo.memoBlockArr;
     return memo;
   }
 }
@@ -327,9 +327,7 @@ function deleteMemoInKvStore(id: string, prefix: string, kvStore: KVStore) {
 /**
  * 持久化 保存笔记
  */
-async function putMemoInKvStore(memo: Memo, uiContext: UIContext, kvStore: KVStore, prefix: string) {
-  const data = await SerializeUtil.serialize(memo.styledString, uiContext);
+async function putMemoInKvStore(memo: Memo, kvStore: KVStore, prefix: string) {
   let key = prefix + '_' + memo.id;
-  memo.serializedStyledString = data;
   kvStore.put(key, JSON.stringify(memo).replace(/__ob_/g, ''));
 }

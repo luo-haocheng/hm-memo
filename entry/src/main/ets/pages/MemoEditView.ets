@@ -1,6 +1,6 @@
 import { Memo, MemoEditorArea, MemoEditorController } from 'memo_editor';
 import { MemoService, SystemCategory, UserCategory } from 'data_source';
-import { KVStore } from 'serializer';
+import { KVStore } from 'data_source';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 
 @Builder
@@ -13,7 +13,7 @@ struct MemoEditView {
   @Local memoTitle: string = '';
   @Local isEditMemo: boolean = false;
   @Local isMemoSaved: boolean = true;
-  @Local currentMemo: Memo = new Memo(new MutableStyledString(''));
+  @Local currentMemo: Memo = new Memo();
   @Consumer() kvStore: KVStore | undefined = undefined;
   uiContext: UIContext = this.getUIContext() as UIContext;
   private memoService: MemoService = MemoService.instance;
@@ -95,25 +95,26 @@ struct MemoEditView {
    * 保存笔记
    */
   async saveMemo(): Promise<boolean> {
-    // let styledString: MutableStyledString = this.editorController.contentController.getStyledString();
-    // let content = styledString.getString();
-    // // 若新增笔记，内容和标题为空，不保存
-    // // 修改笔记，内容和标题为空，按返回无响应
-    // if (content === '' && this.memoTitle === '') {
-    //   return this.isEditMemo ? false : true;
-    // }
-    //
-    // if (this.isEditMemo) {
-    //   this.currentMemo.updateContent(styledString, this.memoTitle);
-    //   this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
-    // } else {
-    //   this.currentMemo.title = this.memoTitle;
-    //   this.currentMemo.styledString = this.editorController.contentController.getStyledString();
-    //   this.currentMemo.description = this.currentMemo.styledString.getString();
-    //   this.memoService.addMemo(this.currentMemo, this.kvStore, this.uiContext);
-    //   this.isEditMemo = true;
-    // }
-    // todo
+    let styledString = this.editorController.contentController.toStyledString({});
+    let contentStr = styledString.getString();
+    // 若新增笔记，内容和标题为空，不保存
+    // 修改笔记，内容和标题为空，按返回无响应
+    if (contentStr === '' && this.memoTitle === '') {
+      return this.isEditMemo ? false : true;
+    }
+
+    const spanResult = this.editorController.contentController.getSpans();
+    await this.currentMemo.updateContent(spanResult, this.uiContext);
+    this.currentMemo.description = contentStr;
+    this.currentMemo.title = this.memoTitle;
+
+    if (this.isEditMemo) {
+      // todo
+      this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
+    } else {
+      this.memoService.addMemo(this.currentMemo, this.kvStore, this.uiContext);
+      this.isEditMemo = true;
+    }
 
     return true;
   }
@@ -123,8 +124,8 @@ struct MemoEditView {
       Column() {
         MemoEditorArea({
           isMemoSaved: this.isMemoSaved,
+          editingMemo: this.currentMemo,
           memoTitle: this.currentMemo.title,
-          memoContent: this.currentMemo.styledString,
           titleChange: (title: string) => {
             this.memoTitle = title;
           },

@@ -1,6 +1,6 @@
 {
   "module": {
-    "name": "serializer_test",
+    "name": "util_test",
     "type": "feature",
     "deviceTypes": [
       "default"
