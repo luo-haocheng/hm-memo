@@ -241,13 +241,13 @@ export class MemoEditorController {
     try {
       // 获取图片信息
       const info = pixelMap.getImageInfoSync();
-      let width = info.size.width;
-      let height = info.size.height;
+      let width = uiContext.px2vp(info.size.width);
+      let height = uiContext.px2vp(info.size.height);
       // 宽度超过最大尺寸时，等比例缩放
       const displayWidth = uiContext.px2vp(display.getDefaultDisplaySync().width) * 0.9;
       if (width > displayWidth) {
+        height = height * (displayWidth / width);
         width = displayWidth;
-        height = width / info.size.width * height;
       }
       // 获取当前光标位置
       const caretOffset = this.contentController.getCaretOffset();
