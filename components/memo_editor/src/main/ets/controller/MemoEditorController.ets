@@ -1,4 +1,5 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
+import { calcDesiredSize } from '../model/Memo';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
@@ -247,7 +248,10 @@ export class MemoEditorController {
     try {
       imageFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       imageSource = image.createImageSource(imageFile.fd);
-      return imageSource.createPixelMapSync();
+      // 按最长边上限降采样解码：编辑器从此刻起就持有小图，保存时自然编码小图
+      const imageInfo = imageSource.getImageInfoSync();
+      const desiredSize = calcDesiredSize(imageInfo.size.width, imageInfo.size.height);
+      return imageSource.createPixelMapSync(desiredSize ? { desiredSize: desiredSize } : undefined);
     } catch (error) {
       console.error(`Failed to create pixelmap when load image. Cause: ${JSON.stringify(error)}`);
       throw new Error(error);

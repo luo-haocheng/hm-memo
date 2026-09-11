@@ -8,6 +8,29 @@ const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 // 图片文件存放的子目录名（相对于 filesDir）
 export const IMAGE_DIR_NAME = 'memo_images';
 
+// 图片最长边上限（px）。解码时按此降采样，同时降低编码耗时、文件体积与内存占用。
+// 编辑区显示宽度约 1134px（手机），2000px 足够清晰。
+// 注意：显示尺寸以解码后的像素尺寸为基准计算，所以上限必须高于所有目标机型的屏幕像素宽度，
+// 否则大图会显示得比预期小。手机屏幕宽 ≤ 1440px，2000px 余量充足；若将来支持平板需重新评估。
+export const MAX_IMAGE_SIDE = 2000;
+
+// JPEG 编码质量。100 几乎不压缩；85 对照片而言肉眼与 100 基本无差别，体积约为其 1/2~1/3。
+// 权衡画质与体积时在此调整（一般 75~90 之间）
+const JPEG_QUALITY = 85;
+
+/**
+ * 按最长边上限计算解码目标尺寸。
+ * 未超过上限时返回 undefined，表示按原始尺寸解码
+ */
+export function calcDesiredSize(width: number, height: number): image.Size | undefined {
+  const maxSide = Math.max(width, height);
+  if (maxSide <= MAX_IMAGE_SIDE) {
+    return undefined;
+  }
+  const ratio = MAX_IMAGE_SIDE / maxSide;
+  return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
+}
+
 export interface MemoBlock {
   /**
    * 文本块：文本内容
@@ -166,7 +189,7 @@ export class Memo {
     try {
       packer = image.createImagePacker();
       file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-      await packer.packToFile(pixelMap, file.fd, { format: 'image/jpeg', quality: 100 });
+      await packer.packToFile(pixelMap, file.fd, { format: 'image/jpeg', quality: JPEG_QUALITY });
     } catch (error) {
       console.error(`Failed to pack pixelmap to file: ${path}. Cause: ${JSON.stringify(error)}`);
       return undefined;
@@ -209,12 +232,12 @@ export class Memo {
     } else if (pixelMap) {
       imgSource = 'file';
       imgSize[1] -= 2 * PIXELMAP_IMG_VERTICAL_MARGIN;
-      const savedPath = await this.savePixelMapToFile(pixelMap, uiContext);
-      if (!savedPath) {
+      const savedFileName = await this.savePixelMapToFile(pixelMap, uiContext);
+      if (!savedFileName) {
         // 写盘失败：丢弃这张图，避免把坏路径存进 MemoBlock
         return undefined;
       }
-      value = savedPath;
+      value = savedFileName;
     } else {
       return undefined;
     }
@@ -310,7 +333,10 @@ export class Memo {
     try {
       imageFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
       imageSource = image.createImageSource(imageFile.fd);
-      return imageSource.createPixelMapSync();
+      // 按最长边上限降采样解码，避免持有全分辨率位图
+      const imageInfo = imageSource.getImageInfoSync();
+      const desiredSize = calcDesiredSize(imageInfo.size.width, imageInfo.size.height);
+      return imageSource.createPixelMapSync(desiredSize ? { desiredSize: desiredSize } : undefined);
     } catch (error) {
       console.error(`Failed to create pixelmap when load image. Cause: ${JSON.stringify(error)}`);
       throw new Error(error);
