@@ -35,7 +35,6 @@ export class Memo {
     this.id = new Date().getTime().toString();
     this.createTime = new Date().getTime().toString();
     this.updateTime = this.createTime;
-    // this.description = this.styledString.getString();
   }
 
   async updateContent(spanResult: Array<RichEditorSpan>, uiContext: UIContext) {
@@ -239,6 +238,7 @@ export class Memo {
         fontSize: textSpan.textStyle.fontSize,
         fontStyle: textSpan.textStyle.fontStyle,
         fontFamily: textSpan.textStyle.fontFamily,
+        lineHeight: textSpan.textStyle.lineHeight,
         decoration: textSpan.textStyle.decoration ?
           {
             type: textSpan.textStyle.decoration.type,
