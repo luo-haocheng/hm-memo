@@ -1,8 +1,15 @@
-import { Memo } from 'memo_editor';
+import { IMAGE_DIR_NAME, Memo } from 'memo_editor';
 import { KVStore } from 'data_source';
 import { CategoryService } from './CategoryService';
 import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
 import { UIContext } from '@kit.ArkUI';
+import { fileIo } from '@kit.CoreFileKit';
+
+// 孤儿图片回收：true 时只记录日志不删除文件，确认清单无误后再改为 false
+const RECLAIM_DRY_RUN = false;
+
+// 备忘图片的扩展名白名单，目录内其余文件一律不处理
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
 
 @ObservedV2
 export class MemoService {
@@ -18,37 +25,143 @@ export class MemoService {
 
   @Trace memoList: Memo[] = [];
   @Trace dumpsters: Memo[] = [];
+  /**
+   * 两个备忘列表是否都已完整加载。
+   * 孤儿图片回收依赖此标志：列表不完整时删除图片会造成误删
+   */
+  private isFullyLoaded: boolean = false;
 
   /**
-   * 读取有效备忘
+   * 加载全部备忘（有效备忘 + 回收站）
+   * 两个列表都完整加载后才置位 isFullyLoaded
    */
-  public async loadEffectiveMemo(kvStore: KVStore) {
+  public async loadAllMemos(kvStore: KVStore) {
+    const effectiveLoaded = await this.loadEffectiveMemo(kvStore);
+    const deletedLoaded = await this.loadDeleteMemo(kvStore);
+    this.isFullyLoaded = effectiveLoaded && deletedLoaded;
+  }
+
+  /**
+   * 读取有效备忘。返回是否完整读取（false 表示数据源不可用，而非没有数据）
+   */
+  public async loadEffectiveMemo(kvStore: KVStore): Promise<boolean> {
     const dataList = await kvStore.getAll('EffectiveMemo');
-    if (dataList) {
-      for (let i = 0; i < dataList.length; i++) {
+    if (!dataList) {
+      console.error('Failed to load effective memos: kv store is unavailable.');
+      return false;
+    }
+    for (let i = 0; i < dataList.length; i++) {
+      // 单条记录损坏不影响其余记录：跳过该条，继续加载后面的
+      try {
         const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
         const memo = this.constructMemo(serializedMemo);
         await this.addMemo(memo);
 
         console.info(`Load effective memo ${memo.id} success.`);
+      } catch (error) {
+        console.error(`Failed to load effective memo ${dataList[i].key}. Cause: ${JSON.stringify(error)}`);
       }
     }
+    return true;
   }
 
   /**
-   * 读取回收站备忘
+   * 读取回收站备忘。返回是否完整读取（false 表示数据源不可用，而非没有数据）
    */
-  public async loadDeleteMemo(kvStore: KVStore) {
+  public async loadDeleteMemo(kvStore: KVStore): Promise<boolean> {
     const dataList = await kvStore.getAll('DeleteMemo');
-    if (dataList) {
-      for (let i = 0; i < dataList.length; i++) {
+    if (!dataList) {
+      console.error('Failed to load deleted memos: kv store is unavailable.');
+      return false;
+    }
+    for (let i = 0; i < dataList.length; i++) {
+      // 单条记录损坏不影响其余记录：跳过该条，继续加载后面的
+      try {
         const serializedMemo = JSON.parse(dataList[i].value as string) as Memo;
         const memo = this.constructMemo(serializedMemo);
         this.dumpsters.push(memo);
 
         console.info(`Load delete memo ${memo.id} success.`);
+      } catch (error) {
+        console.error(`Failed to load deleted memo ${dataList[i].key}. Cause: ${JSON.stringify(error)}`);
       }
     }
+    return true;
+  }
+
+  /**
+   * 回收孤儿图片：删除 memo_images 下不再被任何备忘（含回收站）引用的文件。
+   *
+   * 安全约束：
+   * - 仅在 isFullyLoaded 为 true 时执行 —— 列表不完整时删除会造成误删
+   * - 白名单式：先收集全部引用，再遍历目录删除未被引用的（顺序不可颠倒）
+   * - 只处理认识的图片扩展名，其余文件一律不动
+   * - 内部不抛异常，可由调用方 fire-and-forget
+   */
+  public reclaimOrphanImages(uiContext: UIContext) {
+    if (!this.isFullyLoaded) {
+      console.info('Skip reclaiming orphan images: memos are not fully loaded.');
+      return;
+    }
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('Failed to reclaim orphan images: host context is unavailable.');
+      return;
+    }
+    const dir = `${context.filesDir}/${IMAGE_DIR_NAME}`;
+    try {
+      if (!fileIo.accessSync(dir)) {
+        // 从未插入过图片，属于正常情况
+        return;
+      }
+    } catch (error) {
+      console.info(`Failed to access directory: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 1. 白名单：收集所有被引用的文件名（有效备忘 + 回收站）
+    const referenced = new Set<string>();
+    for (const memo of this.memoList) {
+      memo.collectImageFileNames(referenced);
+    }
+    for (const memo of this.dumpsters) {
+      memo.collectImageFileNames(referenced);
+    }
+
+    // 2. 扫描目录
+    let fileNames: string[] = [];
+    try {
+      fileNames = fileIo.listFileSync(dir);
+    } catch (error) {
+      console.error(`Failed to list image dir: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 3. 逐个比对，删除未被引用的
+    let removedCount = 0;
+    for (const rawName of fileNames) {
+      // 防御性截取目录前缀：即使接口返回的是完整路径也能正确取到文件名
+      const fileName = rawName.substring(rawName.lastIndexOf('/') + 1);
+      if (referenced.has(fileName) || !isImageFileName(fileName)) {
+        continue;
+      }
+      const path = `${dir}/${fileName}`;
+      try {
+        const size = fileIo.statSync(path).size;
+        if (RECLAIM_DRY_RUN) {
+          console.info(`[reclaim] would remove orphan image: ${fileName} (${size} bytes)`);
+        } else {
+          fileIo.unlinkSync(path);
+          console.info(`[reclaim] removed orphan image: ${fileName} (${size} bytes)`);
+        }
+        removedCount++;
+      } catch (error) {
+        // 删不掉最多留个孤儿，下次回收再试
+        console.error(`Failed to remove orphan image: ${path}. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+    console.info(`[reclaim] orphan images ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
+      + `${removedCount}, kept: ${referenced.size}.`);
   }
 
   /**
@@ -315,6 +428,14 @@ export class MemoService {
     memo.memoBlockArr = Array.isArray(serializedMemo.memoBlockArr) ? serializedMemo.memoBlockArr : [];
     return memo;
   }
+}
+
+/**
+ * 判断是否为备忘图片文件（按扩展名）
+ */
+function isImageFileName(fileName: string): boolean {
+  const lowerName = fileName.toLowerCase();
+  return IMAGE_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
 }
 
 /**

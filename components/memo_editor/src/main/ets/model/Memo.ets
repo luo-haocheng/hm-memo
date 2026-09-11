@@ -6,7 +6,7 @@ const RESOURCE_IMG_RIGHT_MARGIN = 8;
 const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 
 // 图片文件存放的子目录名（相对于 filesDir）
-const IMAGE_DIR_NAME = 'memo_images';
+export const IMAGE_DIR_NAME = 'memo_images';
 
 export interface MemoBlock {
   /**
@@ -94,6 +94,18 @@ export class Memo {
         }
       } catch (error) {
         console.error(`Failed to rebuild block at offset ${block.offset}. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+  }
+
+  /**
+   * 收集本备忘引用的图片文件名（供孤儿图片回收使用）
+   * 只统计确实指向文件的图片块：资源图的 value 是空的，不能当成文件名
+   */
+  collectImageFileNames(into: Set<string>) {
+    for (const block of this.memoBlockArr) {
+      if (block.type === 'image' && block.imgSource === 'file' && block.value) {
+        into.add(block.value);
       }
     }
   }

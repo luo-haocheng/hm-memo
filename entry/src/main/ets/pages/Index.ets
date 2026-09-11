@@ -206,10 +206,13 @@ struct Index {
     // 加载用户设置
     await this.settingService.loadUserSetting(this.settingStore);
     // 加载备忘数据
-    await this.memoService.loadEffectiveMemo(this.kvStore);
-    await this.memoService.loadDeleteMemo(this.kvStore);
+    await this.memoService.loadAllMemos(this.kvStore);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.currentMemoList);
+    // 数据已完整加载：延后到首帧之后再回收无引用的孤儿图片，避免拖慢启动
+    setTimeout(() => {
+      this.memoService.reclaimOrphanImages(this.uiContext);
+    }, 0);
   }
 
   onBackPress(): boolean | void {
