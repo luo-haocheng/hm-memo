@@ -5,7 +5,14 @@ import { util } from '@kit.ArkTS';
 const RESOURCE_IMG_RIGHT_MARGIN = 8;
 const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 
+// 图片文件存放的子目录名（相对于 filesDir）
+const IMAGE_DIR_NAME = 'memo_images';
+
 export interface MemoBlock {
+  /**
+   * 文本块：文本内容
+   * 图片块：memo_images 下的文件名（不含目录，绝对路径在读取时拼装）
+   */
   value: string;
   offset: number;
   type: 'text' | 'image' | 'builder';
@@ -65,7 +72,7 @@ export class Memo {
     this.updateTime = new Date().getTime().toString();
   }
 
-  rebuildContent(controller: RichEditorController) {
+  rebuildContent(controller: RichEditorController, uiContext: UIContext) {
     for (const block of this.memoBlockArr) {
       // 单块重建失败不影响其余内容：跳过该块，继续重建后续内容
       try {
@@ -80,7 +87,7 @@ export class Memo {
             // const resource = this.BUILTIN_IMAGES[block.value];
             // this.controller.addImageSpan(resource, options);
           } else if (block.imgSource === 'file') {
-            const pixelMap = this.loadImage(block.value);
+            const pixelMap = this.loadImage(this.resolveImagePath(uiContext, block.value));
             controller.addImageSpan(pixelMap, options);
             pixelMap.release();
           }
@@ -89,6 +96,19 @@ export class Memo {
         console.error(`Failed to rebuild block at offset ${block.offset}. Cause: ${JSON.stringify(error)}`);
       }
     }
+  }
+
+  /**
+   * 把图片文件名还原为绝对路径。
+   * 备忘里只保存文件名，目录在读取时拼装，避免把沙箱路径写进持久化数据
+   */
+  private resolveImagePath(uiContext: UIContext, fileName: string): string {
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error(`Failed to get host context when resolving image: ${fileName}`);
+      return '';
+    }
+    return `${context.filesDir}/${IMAGE_DIR_NAME}/${fileName}`;
   }
 
   private parseResourceIdFromUri(uri: string): number | undefined {
@@ -107,13 +127,17 @@ export class Memo {
     return margin;
   }
 
+  /**
+   * 将图片编码落盘，返回文件名（不含目录）。
+   * 备忘只保存文件名，绝对路径在读取时由 resolveImagePath 拼装
+   */
   private async savePixelMapToFile(pixelMap: image.PixelMap, uiContext: UIContext): Promise<string | undefined> {
     const context = uiContext.getHostContext();
     if (context === undefined) {
       console.error('Failed to get host context when saving pixelmap.');
       return undefined;
     }
-    const dir = `${context.filesDir}/memo_images`;
+    const dir = `${context.filesDir}/${IMAGE_DIR_NAME}`;
     try {
       if (!fileIo.accessSync(dir)) {
         fileIo.mkdirSync(dir, true);
@@ -125,7 +149,8 @@ export class Memo {
 
     let file: fileIo.File | undefined;
     let packer: image.ImagePacker | undefined;
-    const path = `${dir}/${util.generateRandomUUID()}.jpg`;
+    const fileName = `${util.generateRandomUUID()}.jpg`;
+    const path = `${dir}/${fileName}`;
     try {
       packer = image.createImagePacker();
       file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
@@ -145,7 +170,7 @@ export class Memo {
       }
     }
 
-    return path;
+    return fileName;
   }
 
   private async mapImageSpan2Block(imageSpan: RichEditorImageSpanResult,

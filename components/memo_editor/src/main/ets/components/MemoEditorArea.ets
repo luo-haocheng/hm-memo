@@ -232,7 +232,7 @@ export struct MemoEditorArea {
               // 预设文本输入样式（与工具栏状态保持一致）
               this.controller.applyTypingStyle();
               // 重建备忘内容
-              this.editingMemo.rebuildContent(this.controller.contentController);
+              this.editingMemo.rebuildContent(this.controller.contentController, this.getUIContext());
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;

@@ -1008,7 +1008,7 @@ struct Index {
         .padding({ left: 0, right: 0 })
         .hitTestBehavior(HitTestMode.None)
         .onReady(() => {
-          memo.rebuildContent(this.previewTextController);
+          memo.rebuildContent(this.previewTextController, this.getUIContext());
         });
     }
     .padding(16)
