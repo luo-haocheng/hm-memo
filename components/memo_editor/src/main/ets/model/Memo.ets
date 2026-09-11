@@ -125,11 +125,11 @@ export class Memo {
 
     let file: fileIo.File | undefined;
     let packer: image.ImagePacker | undefined;
-    const path = `${dir}/${util.generateRandomUUID()}.png`;
+    const path = `${dir}/${util.generateRandomUUID()}.jpg`;
     try {
       packer = image.createImagePacker();
       file = fileIo.openSync(path, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE);
-      await packer.packToFile(pixelMap, file.fd, { format: 'image/png', quality: 100 });
+      await packer.packToFile(pixelMap, file.fd, { format: 'image/jpeg', quality: 100 });
     } catch (error) {
       console.error(`Failed to pack pixelmap to file: ${path}. Cause: ${JSON.stringify(error)}`);
       return undefined;
