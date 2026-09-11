@@ -65,23 +65,28 @@ export class Memo {
     this.updateTime = new Date().getTime().toString();
   }
 
-  async rebuildContent(controller: RichEditorController) {
+  rebuildContent(controller: RichEditorController) {
     for (const block of this.memoBlockArr) {
-      if (block.type === 'text') {
-        const options = this.mapBlock2TextSpan(block);
-        controller.addTextSpan(block.value, options);
-      } else if (block.type === 'image') {
-        console.info(`Image Block 1: ${JSON.stringify(block)}`);
-        const options = this.mapBlock2ImageSpan(block);
-        if (block.imgSource === 'resource') {
-          // todo
-          // const resource = this.BUILTIN_IMAGES[block.value];
-          // this.controller.addImageSpan(resource, options);
-        } else if (block.imgSource === 'file') {
-          const pixelMap = this.loadImage(block.value);
-          controller.addImageSpan(pixelMap, options);
-          pixelMap.release();
+      // 单块重建失败不影响其余内容：跳过该块，继续重建后续内容
+      try {
+        if (block.type === 'text') {
+          const options = this.mapBlock2TextSpan(block);
+          controller.addTextSpan(block.value, options);
+        } else if (block.type === 'image') {
+          console.info(`Image Block 1: ${JSON.stringify(block)}`);
+          const options = this.mapBlock2ImageSpan(block);
+          if (block.imgSource === 'resource') {
+            // todo
+            // const resource = this.BUILTIN_IMAGES[block.value];
+            // this.controller.addImageSpan(resource, options);
+          } else if (block.imgSource === 'file') {
+            const pixelMap = this.loadImage(block.value);
+            controller.addImageSpan(pixelMap, options);
+            pixelMap.release();
+          }
         }
+      } catch (error) {
+        console.error(`Failed to rebuild block at offset ${block.offset}. Cause: ${JSON.stringify(error)}`);
       }
     }
   }

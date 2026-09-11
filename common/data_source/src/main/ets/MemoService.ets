@@ -311,7 +311,8 @@ export class MemoService {
     memo.createTime = serializedMemo.createTime;
     memo.updateTime = serializedMemo.updateTime;
     memo.description = serializedMemo.description;
-    memo.memoBlockArr = serializedMemo.memoBlockArr;
+    // 兼容历史数据：Span 迁移前的记录没有 memoBlockArr 字段，缺失或非法时回落为空数组
+    memo.memoBlockArr = Array.isArray(serializedMemo.memoBlockArr) ? serializedMemo.memoBlockArr : [];
     return memo;
   }
 }
