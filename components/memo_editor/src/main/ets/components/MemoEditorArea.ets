@@ -1,4 +1,4 @@
-import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
+import { COLOR_LIST } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { Memo } from '../model/Memo';
@@ -229,15 +229,9 @@ export struct MemoEditorArea {
             .barState(BarState.Off)
             .placeholder('开始书写你的笔记', { fontColor: $r('sys.color.font_tertiary') })
             .onReady(() => {
-              // 预设文本输入样式
-              this.controller.contentController.setTypingStyle({
-                fontSize: DEFAULT_FONT_SIZE,
-                fontStyle: FontStyle.Normal,
-                fontWeight: FontWeight.Normal,
-                lineHeight: DEFAULT_FONT_SIZE * 1.5,
-                fontColor: $r('sys.color.font_primary'),
-              });
-
+              // 预设文本输入样式（与工具栏状态保持一致）
+              this.controller.applyTypingStyle();
+              // 重建备忘内容
               this.editingMemo.rebuildContent(this.controller.contentController);
             })
             .onEditingChange((editStatus) => {

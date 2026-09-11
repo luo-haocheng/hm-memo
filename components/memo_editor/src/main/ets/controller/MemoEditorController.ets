@@ -4,6 +4,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord } from '../model/ChangeRecord';
 import { display } from '@kit.ArkUI';
+import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
 
 @ObservedV2
 export class MemoEditorController {
@@ -27,7 +28,7 @@ export class MemoEditorController {
   // 当前文本是否下划线
   @Trace isUnderline: boolean = false;
   // 当前字体大小
-  @Trace fontSize: number = 16;
+  @Trace fontSize: number = DEFAULT_FONT_SIZE;
   // 当前段落对齐样式
   @Trace alignStyle: TextAlign = TextAlign.Start;
   // 显示的扩展工具栏索引号 0-关闭扩展工具栏 1-显示调色板 2-显示段落样式选项栏
@@ -84,6 +85,29 @@ export class MemoEditorController {
   }
 
   /**
+   * 由当前工具栏状态组装"后续输入样式"
+   */
+  private buildTypingStyle(): RichEditorTextStyle {
+    return {
+      fontSize: this.fontSize,
+      lineHeight: this.fontSize * 1.5,
+      fontColor: COLOR_LIST[this.colorIdx],
+      fontWeight: this.isBold ? FontWeight.Bold : FontWeight.Normal,
+      fontStyle: this.isItalics ? FontStyle.Italic : FontStyle.Normal,
+      decoration: {
+        type: this.isUnderline ? TextDecorationType.Underline : TextDecorationType.None,
+      },
+    };
+  }
+
+  /**
+   * 让"后续输入样式"与工具栏状态保持一致
+   */
+  applyTypingStyle() {
+    this.contentController.setTypingStyle(this.buildTypingStyle());
+  }
+
+  /**
    * 设置文本样式
    */
   updateTextStyle(textStyle: RichEditorTextStyle) {
@@ -91,7 +115,10 @@ export class MemoEditorController {
     const selection = this.contentController.getSelection();
     const start = selection.selection[0] ?? 0;
     const end = selection.selection[1] ?? 0;
+    // 无论有无选区，都让"后续输入样式"跟随工具栏状态
+    this.applyTypingStyle();
     if (start < 0 || end <= start) {
+      // 无选区：样式作用于此后输入的内容，已有内容不变
       return;
     }
     // 更新文本样式
