@@ -2,7 +2,6 @@ import image from '@ohos.multimedia.image';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 
-const RESOURCE_IMG_RIGHT_MARGIN = 8;
 const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 
 // 图片文件存放的子目录名（相对于 filesDir）
@@ -17,6 +16,59 @@ export const MAX_IMAGE_SIDE = 2000;
 // JPEG 编码质量。100 几乎不压缩；85 对照片而言肉眼与 100 基本无差别，体积约为其 1/2~1/3。
 // 权衡画质与体积时在此调整（一般 75~90 之间）
 const JPEG_QUALITY = 85;
+
+// 内置图片的显示尺寸（vp）
+export const BUILTIN_IMAGE_SIZE = 20;
+
+// 内置图片的右边距（vp）
+const BUILTIN_IMAGE_RIGHT_MARGIN = 4;
+
+/** 内置图片名称：圆环（circle.svg） */
+export const BUILTIN_IMAGE_CIRCLE = 'circle';
+
+/**
+ * 内置图片表：名称 → 资源。新增内置图时在此登记。
+ * 备忘里存的是**名称**而不是资源 id —— id 由构建期分配，会随资源增删而变
+ */
+const BUILTIN_IMAGES: Map<string, Resource> = new Map<string, Resource>([
+  [BUILTIN_IMAGE_CIRCLE, $r('app.media.circle')],
+]);
+
+/**
+ * 名称 → 内置图片资源；未登记的名称返回 undefined
+ */
+export function builtinImageResource(name: string): Resource | undefined {
+  return BUILTIN_IMAGES.get(name);
+}
+
+/**
+ * 内置图片的固定样式，插入与重建共用同一份定义。
+ * 内置图的尺寸和边距都是已知常量，刻意不走 getSpans() 的往返 ——
+ * "边距是否计入返回尺寸"的口径一旦与保存时的换算不一致，每次保存/重开图片都会漂移
+ */
+export function builtinImageStyle(): RichEditorImageSpanStyle {
+  return {
+    size: [BUILTIN_IMAGE_SIZE, BUILTIN_IMAGE_SIZE],
+    verticalAlign: ImageSpanAlignment.CENTER,
+    objectFit: ImageFit.Auto,
+    layoutStyle: {
+      margin: { right: BUILTIN_IMAGE_RIGHT_MARGIN },
+    },
+  };
+}
+
+/**
+ * 资源 id → 内置图片名称；未登记的资源返回 undefined
+ */
+function builtinImageNameById(resourceId: number): string | undefined {
+  for (const name of BUILTIN_IMAGES.keys()) {
+    const resource = BUILTIN_IMAGES.get(name);
+    if (resource && resource.id === resourceId) {
+      return name;
+    }
+  }
+  return undefined;
+}
 
 /**
  * 按最长边上限计算解码目标尺寸。
@@ -106,9 +158,12 @@ export class Memo {
           console.info(`Image Block 1: ${JSON.stringify(block)}`);
           const options = this.mapBlock2ImageSpan(block);
           if (block.imgSource === 'resource') {
-            // todo
-            // const resource = this.BUILTIN_IMAGES[block.value];
-            // this.controller.addImageSpan(resource, options);
+            const resource = builtinImageResource(block.value);
+            if (resource) {
+              controller.addImageSpan(resource, options);
+            } else {
+              console.error(`Unknown builtin image: ${block.value}`);
+            }
           } else if (block.imgSource === 'file') {
             const pixelMap = this.loadImage(this.resolveImagePath(uiContext, block.value));
             controller.addImageSpan(pixelMap, options);
@@ -153,9 +208,9 @@ export class Memo {
 
   private getImgMargin(imgSource: 'resource' | 'file'): Margin {
     const margin: Margin = {};
-    if (imgSource === 'resource') {
-      margin.right = RESOURCE_IMG_RIGHT_MARGIN;
-    } else if (imgSource === 'file') {
+    // 内置图不加边距：边距会计入 getSpans 返回的尺寸，一旦它与保存时的换算口径不一致，
+    // 每次保存/重开都会让图片尺寸漂移。24vp 的小图标对边距不敏感，先留空
+    if (imgSource === 'file') {
       margin.top = PIXELMAP_IMG_VERTICAL_MARGIN;
       margin.bottom = PIXELMAP_IMG_VERTICAL_MARGIN;
     }
@@ -218,17 +273,18 @@ export class Memo {
     const pixelMap = imageSpan.valuePixelMap;
     const resourceStr = imageSpan.valueResourceStr;
     if (resourceStr) {
-      if (typeof resourceStr === 'string' && resourceStr.startsWith('resource:///')) {
-        imgSource = 'resource';
-        // todo
-        // imgSize[0] -= this.RESOURCE_IMG_RIGHT_MARGIN;
-        // const resId = this.parseResourceIdFromUri(resourceStr);
-        // if (resId) {
-        //   value = this.resourceNameById.get(resId) ?? '';
-        // }
-      } else {
+      // valueResourceStr 可能是 "resource:///<id>" 字符串，也可能直接是 Resource 对象，两种都兼容
+      const resourceId = typeof resourceStr === 'string'
+        ? this.parseResourceIdFromUri(resourceStr)
+        : resourceStr.id;
+      const builtinName = resourceId === undefined ? undefined : builtinImageNameById(resourceId);
+      if (!builtinName) {
+        // 不是已登记的内置图（系统资源或其它来源）：丢弃，避免存下无法还原的引用
+        console.error(`Unsupported resource image: ${JSON.stringify(resourceStr)}`);
         return undefined;
       }
+      imgSource = 'resource';
+      value = builtinName;
     } else if (pixelMap) {
       imgSource = 'file';
       imgSize[1] -= 2 * PIXELMAP_IMG_VERTICAL_MARGIN;
@@ -242,12 +298,10 @@ export class Memo {
       return undefined;
     }
 
-    return {
-      value: value,
-      type: 'image',
-      imgSource: imgSource,
-      offset: imageSpan.spanPosition.spanRange[0],
-      imageStyle: {
+    // 内置图用固定的样式常量；文件图从编辑器读回，做到所见即所得
+    const imageStyle: RichEditorImageSpanStyle = imgSource === 'resource'
+      ? builtinImageStyle()
+      : {
         size: imgSize,
         objectFit: imageSpan.imageStyle.objectFit,
         verticalAlign: imageSpan.imageStyle.verticalAlign,
@@ -255,7 +309,14 @@ export class Memo {
           margin: this.getImgMargin(imgSource),
           borderRadius: imageSpan.imageStyle.layoutStyle?.borderRadius,
         },
-      }
+      };
+
+    return {
+      value: value,
+      type: 'image',
+      imgSource: imgSource,
+      offset: imageSpan.spanPosition.spanRange[0],
+      imageStyle: imageStyle,
     };
   }
 

@@ -1,5 +1,5 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
-import { calcDesiredSize } from '../model/Memo';
+import { builtinImageResource, builtinImageStyle, calcDesiredSize } from '../model/Memo';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
@@ -207,6 +207,26 @@ export class MemoEditorController {
           }
         }
       });
+  }
+
+  /**
+   * 插入内置图片（行内小图标，不独占段落）
+   */
+  insertBuiltinImage(name: string, uiContext: UIContext) {
+    const resource = builtinImageResource(name);
+    if (!resource) {
+      console.error(`Unknown builtin image: ${name}`);
+      return;
+    }
+    try {
+      const caretOffset = this.contentController.getCaretOffset();
+      this.contentController.addImageSpan(resource, {
+        offset: caretOffset,
+        imageStyle: builtinImageStyle(),
+      });
+    } catch (error) {
+      console.error(`Failed to insert builtin image ${name}. Cause: ${JSON.stringify(error)}`);
+    }
   }
 
   /**

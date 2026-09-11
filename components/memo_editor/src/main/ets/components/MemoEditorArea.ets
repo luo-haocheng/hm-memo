@@ -1,7 +1,7 @@
 import { COLOR_LIST } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
-import { Memo } from '../model/Memo';
+import { BUILTIN_IMAGE_CIRCLE, Memo } from '../model/Memo';
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -189,6 +189,15 @@ export struct MemoEditorArea {
         .fontColor([$r('sys.color.font_primary')])
         .onClick(() => {
           this.controller.insertImage(this.getUIContext());
+        });
+
+      // 插入内置图片
+      Image($r('app.media.circle'))
+        .width(20)
+        .height(20)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          this.controller.insertBuiltinImage(BUILTIN_IMAGE_CIRCLE, this.getUIContext());
         });
     }
     .padding(12)
