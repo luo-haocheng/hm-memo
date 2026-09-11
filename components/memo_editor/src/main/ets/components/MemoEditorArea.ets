@@ -28,8 +28,8 @@ export struct MemoEditorArea {
         Row() {
           Slider({
             value: this.controller.fontSize,
-            min: 14, // 滑动最小值
-            max: 30, // 滑动最大值
+            min: 10, // 滑动最小值
+            max: 24, // 滑动最大值
             step: 2,
             style: SliderStyle.InSet,
           })

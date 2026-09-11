@@ -5,7 +5,7 @@ export const RING_UTF8 = '\u25EF';
 export const CHECK_MARK_UTF8 = '\u2713';
 
 // 默认字体大小
-export const DEFAULT_FONT_SIZE = 16;
+export const DEFAULT_FONT_SIZE = 14;
 
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =
