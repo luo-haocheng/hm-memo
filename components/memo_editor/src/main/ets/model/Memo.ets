@@ -377,11 +377,11 @@ export class Memo {
       value: textSpan.value,
       offset: textSpan.spanPosition.spanRange[0],
       textStyle: {
+        decoration: decoration,
         fontSize: textSpan.textStyle.fontSize,
         fontStyle: textSpan.textStyle.fontStyle,
         fontFamily: textSpan.textStyle.fontFamily,
         lineHeight: textSpan.textStyle.lineHeight,
-        decoration: decoration,
         fontColor: this.normalizeColor(textSpan.textStyle.fontColor),
         fontWeight: this.fontWeightResult2Value(textSpan.textStyle.fontWeight),
       },
