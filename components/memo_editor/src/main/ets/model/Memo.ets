@@ -356,6 +356,22 @@ export class Memo {
   }
 
   private mapTextSpan2Block(textSpan: RichEditorTextSpanResult): MemoBlock {
+    // decoration.color 走与 fontColor 相同的归一化：
+    // Resource 类型无法还原（返回 undefined，回落默认装饰色），十六进制色值可安全往返
+    const sourceDecoration = textSpan.textStyle.decoration;
+    const decoration: DecorationStyleInterface | undefined = sourceDecoration ? {
+      type: sourceDecoration.type,
+      color: this.normalizeColor(sourceDecoration.color),
+    } : undefined;
+
+    // paragraphStyle 只搬运明确支持的字段，不整体拷贝：
+    // 编辑器填充的其它字段（如 leadingMargin，其 LeadingMarginPlaceholder 内含 PixelMap）
+    // 一旦被写进 KV 就无法还原，甚至可能让 JSON.stringify 抛异常导致整次保存静默失败
+    const sourceParagraph = textSpan.paragraphStyle;
+    const paragraphStyle: RichEditorParagraphStyle | undefined = sourceParagraph ? {
+      textAlign: sourceParagraph.textAlign
+    } : undefined;
+
     return {
       type: 'text',
       value: textSpan.value,
@@ -365,15 +381,11 @@ export class Memo {
         fontStyle: textSpan.textStyle.fontStyle,
         fontFamily: textSpan.textStyle.fontFamily,
         lineHeight: textSpan.textStyle.lineHeight,
-        decoration: textSpan.textStyle.decoration ?
-          {
-            type: textSpan.textStyle.decoration.type,
-            color: textSpan.textStyle.decoration.color,
-          } : undefined,
+        decoration: decoration,
         fontColor: this.normalizeColor(textSpan.textStyle.fontColor),
         fontWeight: this.fontWeightResult2Value(textSpan.textStyle.fontWeight),
       },
-      paragraphStyle: textSpan.paragraphStyle,
+      paragraphStyle: paragraphStyle,
     };
   }
 
