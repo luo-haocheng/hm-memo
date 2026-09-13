@@ -154,35 +154,39 @@ export class MemoEditorController {
   }
 
   /**
-   * 获取段落移动范围
+   * 获取段落范围（编辑器坐标）
+   *
+   * 用 getParagraphs 而不是解析 toStyledString 的纯文本：
+   * 段落边界由框架给出，不依赖"图片 / SymbolSpan / BuilderSpan 在纯文本里占几个字符"这类
+   * 文档未定义的假设 —— 那些假设一旦不成立，算出的下标就会和编辑器坐标错位。
+   *
+   * 选中多个字符时，返回覆盖整个选区所跨段落的范围
    */
   getParagraphRange(start: number, end: number): RichEditorRange {
-    // 当前显示文本内容
     try {
-      const content = this.contentController.toStyledString({}).getString();
-
-      if (start === end) {
-        // 中间独占一行
-        if (content.charAt(start - 1) === '\n' && content.charAt(end) === '\n') {
-          return { start: start, end: start + 1 };
+      // 必须传参（空对象即可）：不传会返回 undefined。
+      // 签名上参数是可选，但实测如此，且与 getSpans() 的行为不一致，勿删
+      const paragraphs = this.contentController.getParagraphs({});
+      // 光标 / 选区端点落在段落边界上时归属后一段，
+      // 这与"光标在段首"的直觉一致，也避开了 range 是否含换行的歧义
+      let first: RichEditorParagraphResult | undefined = undefined;
+      let last: RichEditorParagraphResult | undefined = undefined;
+      for (const paragraph of paragraphs) {
+        if (paragraph.range[0] <= start) {
+          first = paragraph;
         }
-        // 末尾独占一行
-        if (content.charAt(start - 1) === '\n' && end === content.length) {
-          return { start: start - 1, end: start };
+        if (paragraph.range[0] <= end) {
+          last = paragraph;
         }
       }
-      // 定位到段落开头
-      while (content.charAt(start - 1) !== '\n' && start !== 0) {
-        start--;
-      }
-      // 定位到段落结尾
-      while (content.charAt(end) !== '\n' && end < content.length) {
-        end++;
+      if (first && last) {
+        return { start: first.range[0], end: last.range[1] };
       }
     } catch (error) {
-      console.error(`Failed to invoke toStyledString. Cause: ${JSON.stringify(error)}`);
+      console.error(`Failed to invoke getParagraphs. Cause: ${JSON.stringify(error)}`);
     }
 
+    // 兜底：拿不到段落信息时按原范围处理，不抛异常
     return { start: start, end: end };
   }
 
