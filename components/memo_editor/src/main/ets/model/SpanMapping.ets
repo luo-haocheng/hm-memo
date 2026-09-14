@@ -98,7 +98,6 @@ function snapshotOfImage(imageSpan: RichEditorImageSpanResult): SpanSnapshot {
     length: spanRange[1] - spanRange[0],
     imagePixelMap: imageSpan.valuePixelMap,
     imageResource: imageSpan.valueResourceStr,
-    imageStyleResult: imageSpan.imageStyle,
   };
 }
 

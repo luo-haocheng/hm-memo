@@ -1,5 +1,6 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { builtinImageResource, builtinImageStyle, calcDesiredSize } from '../model/Memo';
+import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
@@ -9,6 +10,10 @@ import { display } from '@kit.ArkUI';
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
 // ==== 撤销/重做探针：临时引用，验证完删除 ====
 import { probeProgrammatic } from '../common/UndoProbe';
+
+// 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
+const FILE_IMAGE_BORDER_RADIUS = 12;
+const FILE_IMAGE_VERTICAL_MARGIN = 12;
 
 /**
  * 取「变更点处」生效的文本样式。
@@ -43,6 +48,35 @@ function minSpanStart(spans: Array<RichEditorSpan>): number {
     }
   }
   return min;
+}
+
+/**
+ * 取快照列表的前 length 个坐标单位（必要时在 span 中间切开）。
+ * 用于原子操作合并时保留栈顶记录的前导部分。
+ */
+function takePrefix(spans: Array<SpanSnapshot>, length: number): Array<SpanSnapshot> {
+  const result: Array<SpanSnapshot> = [];
+  let remaining = length;
+  for (const span of spans) {
+    if (remaining <= 0) {
+      break;
+    }
+    if (span.length <= remaining) {
+      result.push(span);
+      remaining -= span.length;
+    } else {
+      // 中途截断：只可能是文本（图片是 1 个单位的原子块）
+      result.push({
+        kind: 'text',
+        value: span.value.substring(0, remaining),
+        length: remaining,
+        textStyle: span.textStyle,
+        paragraphStyle: span.paragraphStyle,
+      });
+      remaining = 0;
+    }
+  }
+  return result;
 }
 
 @ObservedV2
@@ -80,6 +114,8 @@ export class MemoEditorController {
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
   private isRestoring: boolean = false;
+  // 原子区间嵌套深度：大于 0 时，期间捕获的多条记录会合并成一条
+  private atomicDepth: number = 0;
   // 段落对齐样式及其点击回调
   alignInfoArr: AlignmentInfo[] = [
     {
@@ -177,6 +213,11 @@ export class MemoEditorController {
         : [];
       // 新内容的样式沿用变更点处的样式，不用 replacedSpans 自带的（原因见 styleAt 的注释）
       const inheritedStyle = styleAt(beforeRaw, rangeStart);
+      // ==== 诊断日志（P5 清理） ====
+      console.info(`[undo] 继承样式: ${inheritedStyle !== undefined
+        ? `fontSize=${inheritedStyle.fontSize} lineHeight=${inheritedStyle.lineHeight}`
+        : '(未找到 → 会沿用 replacedSpans 的原始样式)'} `
+        + `; 变更点附近 span 数=${beforeRaw.length}`);
       for (const span of toSnapshots(afterRaw)) {
         if (span.kind === 'text' && inheritedStyle !== undefined) {
           span.textStyle = inheritedStyle;
@@ -191,25 +232,30 @@ export class MemoEditorController {
     const delta = spansTotalLength(record.afterSpans) - spansTotalLength(record.beforeSpans);
     record.caretAfter = rangeStart + (delta > 0 ? delta : 0);
 
-    // P1 不支持图片：含图则清空历史。
-    // 图片会改变后续记录的坐标，跳过不记会导致撤销落到错误的位置 —— 宁可历史从头开始，也不能出错
-    if (record.hasImage()) {
-      console.info('[undo] 变更涉及图片，P1 阶段清空历史');
-      this.resetHistory();
-      return;
+    // ==== 诊断日志（P5 清理）：本条记录捕获到什么 ====
+    let headInfo = '(空)';
+    if (record.afterSpans.length > 0) {
+      const head = record.afterSpans[0];
+      headInfo = `kind=${head.kind} fontSize=${head.textStyle?.fontSize} len=${head.length}`;
     }
+    console.info(`[undo] 捕获: changeStart=${rangeStart} 分支=${afterRaw.length === 0 ? '纯删除' : '插入'} `
+      + `旧侧起点=${record.beforeStart} 旧侧长=${spansTotalLength(record.beforeSpans)} `
+      + `新侧起点=${record.afterStart} 新侧长=${spansTotalLength(record.afterSpans)} 新侧首段(${headInfo})`);
+
     this.pushRecord(record);
   }
 
-  /** 撤销 */
-  unDo() {
+  /**
+   * 撤销。需要 uiContext 是因为图片快照的样式要在恢复时重算（用得到 px2vp）
+   */
+  unDo(uiContext: UIContext) {
     if (this.isRestoring || this.currRecordIdx < 1) {
       return;
     }
     const record = this.historyRecords[this.currRecordIdx];
     this.isRestoring = true;
     try {
-      this.applyRecord(record, true);
+      this.applyRecord(record, true, uiContext);
       this.currRecordIdx -= 1;
     } catch (error) {
       console.error(`[undo] 撤销失败: ${JSON.stringify(error)}`);
@@ -219,14 +265,14 @@ export class MemoEditorController {
   }
 
   /** 重做 */
-  reDo() {
+  reDo(uiContext: UIContext) {
     if (this.isRestoring || this.currRecordIdx >= this.historyLength - 1) {
       return;
     }
     const record = this.historyRecords[this.currRecordIdx + 1];
     this.isRestoring = true;
     try {
-      this.applyRecord(record, false);
+      this.applyRecord(record, false, uiContext);
       this.currRecordIdx += 1;
     } catch (error) {
       console.error(`[undo] 重做失败: ${JSON.stringify(error)}`);
@@ -235,8 +281,29 @@ export class MemoEditorController {
     }
   }
 
-  /** 记录入栈，并截断"未来"（撤销后再编辑会让重做栈失效） */
+  // ==================== 原子操作 ====================
+
+  /**
+   * 开始一个原子区间：期间捕获到的多条记录会合并成一条。
+   * 用途：像"插入图片 + 插入换行"这种一次用户操作产生多条底层变更的场景，
+   * 否则撤销一次只会退掉其中一步。
+   */
+  beginAtomic() {
+    this.atomicDepth += 1;
+  }
+
+  /** 结束原子区间 */
+  endAtomic() {
+    if (this.atomicDepth > 0) {
+      this.atomicDepth -= 1;
+    }
+  }
+
+  /** 记录入栈。原子区间内并入栈顶；否则截断"未来"（撤销后再编辑会让重做栈失效）后入栈 */
   private pushRecord(record: ChangeRecord) {
+    if (this.atomicDepth > 0 && this.mergeIntoTop(record)) {
+      return;
+    }
     if (this.currRecordIdx < this.historyRecords.length - 1) {
       this.historyRecords.splice(this.currRecordIdx + 1);
     }
@@ -246,12 +313,42 @@ export class MemoEditorController {
   }
 
   /**
+   * 把新记录并入栈顶（原子操作的多步合成一条）。
+   *
+   * 规则：保留栈顶的 before 侧；after 侧取「栈顶 after 中位于新记录起点之前的部分 + 新记录的 after」。
+   * 那截前导必须保留 —— 两条记录覆盖的区域起点可能不同：例如插入照片时，
+   * 第一条记录覆盖 [0,4)，第二条只覆盖 [3,5)，直接替换 after 会把 [0,3) 的内容丢掉。
+   */
+  private mergeIntoTop(record: ChangeRecord): boolean {
+    if (this.currRecordIdx < 1) {
+      return false; // 栈顶是基线，不能并进去
+    }
+    const top = this.historyRecords[this.currRecordIdx];
+    if (record.afterStart < top.afterStart) {
+      return false; // 起点回退，超出预期，保守起见不合并
+    }
+    const merged: Array<SpanSnapshot> = [];
+    const headLength = record.afterStart - top.afterStart;
+    if (headLength > 0) {
+      for (const span of takePrefix(top.afterSpans, headLength)) {
+        merged.push(span);
+      }
+    }
+    for (const span of record.afterSpans) {
+      merged.push(span);
+    }
+    top.afterSpans = merged;
+    top.caretAfter = record.caretAfter;
+    return true;
+  }
+
+  /**
    * 把记录的一侧应用到编辑器。
    *
    * 顺序必须是"先删后插"：先删掉对侧占用的整个范围，再把本侧内容插到本侧起点；
    * 反过来先插会把后面的坐标整体右移。
    */
-  private applyRecord(record: ChangeRecord, useBefore: boolean) {
+  private applyRecord(record: ChangeRecord, useBefore: boolean, uiContext: UIContext) {
     const removeStart = useBefore ? record.afterStart : record.beforeStart;
     const removeLength = spansTotalLength(useBefore ? record.afterSpans : record.beforeSpans);
     const insertStart = useBefore ? record.beforeStart : record.afterStart;
@@ -265,21 +362,21 @@ export class MemoEditorController {
       const span = spans[i];
       const raw = span.value;
       const shown = raw.length > 24 ? `${raw.substring(0, 24)}...` : raw;
-      console.info(`[undo]   span[${i}] len=${span.length} `
-        + `fontSize=${span.textStyle?.fontSize} fontWeight=${span.textStyle?.fontWeight} `
-        + `lineHeight=${span.textStyle?.lineHeight} para=${JSON.stringify(span.paragraphStyle)} `
+      console.info(`[undo]   span[${i}] kind=${span.kind} len=${span.length} `
+        + `fontSize=${span.textStyle?.fontSize} lineHeight=${span.textStyle?.lineHeight} `
+        + `hasPixelMap=${span.imagePixelMap !== undefined} hasResource=${span.imageResource !== undefined} `
         + `value="${shown.replace(/\n/g, '\\n')}"`);
     }
 
     if (removeLength > 0) {
       this.contentController.deleteSpans({ start: removeStart, end: removeStart + removeLength });
     }
-    this.insertSpans(spans, insertStart);
+    this.insertSpans(spans, insertStart, uiContext);
     this.contentController.setCaretOffset(caret);
   }
 
   /** 按顺序把一组快照插回编辑器。游标用快照自带的 length 推进，不依赖 span 之间无缝衔接 */
-  private insertSpans(spans: Array<SpanSnapshot>, start: number) {
+  private insertSpans(spans: Array<SpanSnapshot>, start: number, uiContext: UIContext) {
     let cursor = start;
     for (const span of spans) {
       if (span.kind === 'text') {
@@ -289,11 +386,87 @@ export class MemoEditorController {
           paragraphStyle: span.paragraphStyle,
         });
       } else {
-        // P1 不产生图片快照；含图的记录在入栈前就被拦掉了
-        console.error('[undo] 遇到图片快照，P1 阶段不支持');
+        this.insertImageSpan(span, cursor, uiContext);
       }
       cursor += span.length;
     }
+  }
+
+  /**
+   * 插入一个图片快照。
+   *
+   * 样式在这里**重算**，不用快照里存的结果值 —— 图片样式本来就由我们插入时决定，
+   * 重算既能保证与原始插入完全一致，又不依赖框架对图片尺寸的报值
+   * （实测 getSpans 在变更后立即读是 [0,0]、replacedSpans 的单位口径也和它不一致）。
+   */
+  private insertImageSpan(span: SpanSnapshot, offset: number, uiContext: UIContext) {
+    const resource = span.imageResource;
+    if (resource !== undefined) {
+      // 内置图：样式是固定常量
+      this.contentController.addImageSpan(resource, { offset: offset, imageStyle: builtinImageStyle() });
+      return;
+    }
+    const pixelMap = span.imagePixelMap;
+    if (pixelMap === undefined) {
+      console.error('[undo] 图片快照既无资源也无 PixelMap，跳过该图');
+      return;
+    }
+    this.contentController.addImageSpan(pixelMap, {
+      offset: offset,
+      imageStyle: this.imageStyleForFile(pixelMap, uiContext),
+    });
+  }
+
+  /**
+   * 相册照片的显示样式。
+   * 插入（addImage）与撤销/重做共用这一个函数，保证重做出来的图
+   * 在尺寸、圆角、边距上与原始插入完全一致。
+   */
+  private imageStyleForFile(pixelMap: image.PixelMap, uiContext: UIContext): RichEditorImageSpanStyle {
+    const info = pixelMap.getImageInfoSync();
+    let width = uiContext.px2vp(info.size.width);
+    let height = uiContext.px2vp(info.size.height);
+    // 宽度超过最大尺寸时，等比例缩放
+    const displayWidth = uiContext.px2vp(display.getDefaultDisplaySync().width) * 0.9;
+    if (width > displayWidth) {
+      height = height * (displayWidth / width);
+      width = displayWidth;
+    }
+    return {
+      size: [width, height],
+      objectFit: ImageFit.Auto,
+      layoutStyle: {
+        borderRadius: FILE_IMAGE_BORDER_RADIUS,
+        margin: { top: FILE_IMAGE_VERTICAL_MARGIN, bottom: FILE_IMAGE_VERTICAL_MARGIN },
+      },
+    };
+  }
+
+  /**
+   * 把输入样式换算成"实际生效"的数值，供 addTextSpan 显式指定样式时使用。
+   *
+   * 为什么需要换算：`setTypingStyle` 设的是**原始值**，渲染时会乘上系统字体缩放；
+   * 而 `addTextSpan` 写入的值**不缩放**。实测输入样式 fontSize=16 时，
+   * 手打文字实际渲染为 14（缩放系数 0.875），而不带样式插入的 span 渲染为 16。
+   * 所以把原始值直接交给 addTextSpan，这段文字的渲染字号会比用户手打的文字大。
+   */
+  private effectiveTypingStyle(uiContext: UIContext): RichEditorTextStyle {
+    const raw = this.buildTypingStyle();
+    let scale = 1;
+    const fontScale = (uiContext.getHostContext() as common.UIAbilityContext).config.fontSizeScale;
+    if (fontScale !== undefined) {
+      scale = fontScale;
+    }
+    return {
+      fontSize: typeof raw.fontSize === 'number' ? raw.fontSize * scale : raw.fontSize,
+      lineHeight: typeof raw.lineHeight === 'number' ? raw.lineHeight * scale : raw.lineHeight,
+      fontStyle: raw.fontStyle,
+      fontWeight: raw.fontWeight,
+      fontFamily: raw.fontFamily,
+      fontColor: raw.fontColor,
+      decoration: raw.decoration,
+      letterSpacing: typeof raw.letterSpacing === 'number' ? raw.letterSpacing * scale : raw.letterSpacing,
+    };
   }
 
   /**
@@ -504,37 +677,30 @@ export class MemoEditorController {
   }
 
   private addImage(pixelMap: image.PixelMap, uiContext: UIContext) {
+    // "插入图片" 与 "插入换行" 是同一次用户操作，用原子区间合成一条历史记录，
+    // 否则撤销一次只会退掉其中一步（先删换行、再撤才删图片）
+    this.beginAtomic();
     try {
-      // 获取图片信息
-      const info = pixelMap.getImageInfoSync();
-      let width = uiContext.px2vp(info.size.width);
-      let height = uiContext.px2vp(info.size.height);
-      // 宽度超过最大尺寸时，等比例缩放
-      const displayWidth = uiContext.px2vp(display.getDefaultDisplaySync().width) * 0.9;
-      if (width > displayWidth) {
-        height = height * (displayWidth / width);
-        width = displayWidth;
-      }
       // 获取当前光标位置
       const caretOffset = this.contentController.getCaretOffset();
-      // 图片选项
-      const imageSpanOptions: RichEditorImageSpanOptions = {
-        offset: caretOffset,
-        imageStyle: {
-          size: [width, height],
-          objectFit: ImageFit.Auto,
-          layoutStyle: { borderRadius: 12, margin: { top: 12, bottom: 12 } },
-        }
-      };
-      // 添加图片
+      // 添加图片（样式与撤销/重做共用同一个函数）
       probeProgrammatic('addImage/addImageSpan + addTextSpan');   // 探针
-      this.contentController.addImageSpan(pixelMap, imageSpanOptions);
-      // 在图片后插入一行（图片独占一个段落）
-      this.contentController.addTextSpan('\n', { offset: caretOffset + 1 });
-      // 这里的两步都会被 onWillChange/onDidChange 自动捕获，无需手动记录。
-      // 注意：它们会产生【两条】独立记录，撤销一次只退一步 —— P3 需要把这类多步操作合成一条
+      this.contentController.addImageSpan(pixelMap, {
+        offset: caretOffset,
+        imageStyle: this.imageStyleForFile(pixelMap, uiContext),
+      });
+      // 在图片后插入一行（图片独占一个段落）。
+      // 必须显式给样式并做字体缩放换算，否则这个换行 span 会带上"未缩放"的字号，
+      // 既让它自己的行高与正文不一致，也会被撤销/重做的"继承变更点样式"逻辑取走并传播出去
+      this.contentController.addTextSpan('\n', {
+        offset: caretOffset + 1,
+        style: this.effectiveTypingStyle(uiContext),
+      });
+      // 这两步都会被 onWillChange 自动捕获并合并成一条记录
     } catch (error) {
       console.error(`Failed to add image to styled string. Cause: ${JSON.stringify(error)}`);
+    } finally {
+      this.endAtomic();
     }
   }
 }

@@ -18,8 +18,6 @@ export interface SpanSnapshot {
   imagePixelMap?: image.PixelMap;
   /** 图片：内置 / 资源图 */
   imageResource?: ResourceStr;
-  /** 图片：编辑器返回的原始样式结果（size 的单位与精度问题留到 P3 处理） */
-  imageStyleResult?: RichEditorImageSpanStyleResult;
 }
 
 /**
@@ -48,10 +46,4 @@ export class ChangeRecord {
   afterSpans: Array<SpanSnapshot> = [];
   /** 重做后光标落点（估算为变更结束处） */
   caretAfter: number = 0;
-
-  /** 这条记录是否涉及图片（P1 阶段不支持，遇到即清空历史） */
-  hasImage(): boolean {
-    return this.beforeSpans.some((span) => span.kind === 'image')
-      || this.afterSpans.some((span) => span.kind === 'image');
-  }
 }

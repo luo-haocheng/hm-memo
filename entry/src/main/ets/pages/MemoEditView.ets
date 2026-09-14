@@ -46,7 +46,7 @@ struct MemoEditView {
           .backgroundColor($r('sys.color.background_secondary'))
           .opacity(this.editorController.currRecordIdx <= 0 ? 0.3 : 1)
           .onClick(() => {
-            this.editorController.unDo();
+            this.editorController.unDo(this.uiContext);
           });
 
         Image($r('app.media.redo'))
@@ -58,7 +58,7 @@ struct MemoEditView {
           .backgroundColor($r('sys.color.background_secondary'))
           .opacity(this.editorController.currRecordIdx >= this.editorController.historyLength - 1 ? 0.3 : 1)
           .onClick(() => {
-            this.editorController.reDo();
+            this.editorController.reDo(this.uiContext);
           });
 
         Image($r('app.media.checkmark'))
