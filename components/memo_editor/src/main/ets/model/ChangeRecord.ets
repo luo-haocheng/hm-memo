@@ -35,7 +35,21 @@ export interface SpanSnapshot {
  *
  * 纯数据类，**不要加 @ObservedV2** —— 避免大对象被 V2 观察机制包裹。
  */
+/**
+ * 记录类型：
+ * - `content`   内容增删，撤销 = 删掉对侧范围 + 插回本侧内容
+ * - `textStyle` 字符样式（粗体 / 斜体 / 下划线 / 字号 / 颜色），撤销 = 把逐段旧样式应用回原范围
+ * - `paragraph` 段落对齐，撤销 = 把逐段旧对齐应用回原范围
+ *
+ * 后两者**不碰内容** —— 段落样式是段落级属性，用"删了重插"会拆开 / 合并段落。
+ * 框架不会通知程序化的样式变更（实测 `updateSpanStyle` / `updateParagraphStyle` 不触发内容回调），
+ * 所以这两类必须在 `updateTextStyle` / `updateParagraphStyle` 里显式记录。
+ */
+export type ChangeKind = 'content' | 'textStyle' | 'paragraph';
+
 export class ChangeRecord {
+  /** 记录类型，默认是内容增删 */
+  kind: ChangeKind = 'content';
   /** 变更发生的位置：撤销后光标落在这里 */
   changeStart: number = 0;
   /** 变更前的那一侧：起点 + 完整内容（可能跨越多个 span） */
@@ -46,4 +60,13 @@ export class ChangeRecord {
   afterSpans: Array<SpanSnapshot> = [];
   /** 重做后光标落点（估算为变更结束处） */
   caretAfter: number = 0;
+
+  // ==== 样式类记录专用 ====
+  // 应用范围 = [beforeStart, beforeStart + beforeSpans 的总长度)，与内容类复用同一组起点字段；
+  // beforeSpans 里逐段带着各自的 textStyle / paragraphStyle，那就是"旧样式"
+
+  /** `textStyle` 类：重做时要重新应用的样式（就是 updateTextStyle 收到的那个） */
+  afterTextStyle?: RichEditorTextStyle;
+  /** `paragraph` 类：重做时要重新应用的对齐方式 */
+  afterAlign?: TextAlign;
 }

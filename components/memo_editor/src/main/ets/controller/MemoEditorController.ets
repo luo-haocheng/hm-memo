@@ -324,6 +324,9 @@ export class MemoEditorController {
       return false; // 栈顶是基线，不能并进去
     }
     const top = this.historyRecords[this.currRecordIdx];
+    if (top.kind !== 'content' || record.kind !== 'content') {
+      return false; // 样式类记录不参与原子合并
+    }
     if (record.afterStart < top.afterStart) {
       return false; // 起点回退，超出预期，保守起见不合并
     }
@@ -349,6 +352,40 @@ export class MemoEditorController {
    * 反过来先插会把后面的坐标整体右移。
    */
   private applyRecord(record: ChangeRecord, useBefore: boolean, uiContext: UIContext) {
+    // 样式类记录不碰内容：段落样式是段落级属性，删了重插会把段落拆开 / 合并
+    if (record.kind === 'textStyle') {
+      const rangeLength = spansTotalLength(record.beforeSpans);
+      // ==== 诊断日志（P5 清理） ====
+      console.info(`[undo] ${useBefore ? '撤销' : '重做'}字符样式: 范围 `
+        + `[${record.beforeStart}, ${record.beforeStart + rangeLength}) 共 ${record.beforeSpans.length} 段`);
+      if (useBefore) {
+        this.applySpanStyles(record.beforeSpans, record.beforeStart);
+      } else {
+        this.contentController.updateSpanStyle({
+          textStyle: record.afterTextStyle,
+          start: record.beforeStart,
+          end: record.beforeStart + rangeLength,
+        });
+      }
+      return;
+    }
+    if (record.kind === 'paragraph') {
+      const rangeLength = spansTotalLength(record.beforeSpans);
+      // ==== 诊断日志（P5 清理） ====
+      console.info(`[undo] ${useBefore ? '撤销' : '重做'}段落对齐: 范围 `
+        + `[${record.beforeStart}, ${record.beforeStart + rangeLength}) 共 ${record.beforeSpans.length} 段`);
+      if (useBefore) {
+        this.applyParagraphAligns(record.beforeSpans, record.beforeStart);
+      } else {
+        this.contentController.updateParagraphStyle({
+          style: { textAlign: record.afterAlign ?? TextAlign.Start },
+          start: record.beforeStart,
+          end: record.beforeStart + rangeLength,
+        });
+      }
+      return;
+    }
+
     const removeStart = useBefore ? record.afterStart : record.beforeStart;
     const removeLength = spansTotalLength(useBefore ? record.afterSpans : record.beforeSpans);
     const insertStart = useBefore ? record.beforeStart : record.afterStart;
@@ -373,6 +410,51 @@ export class MemoEditorController {
     }
     this.insertSpans(spans, insertStart, uiContext);
     this.contentController.setCaretOffset(caret);
+  }
+
+  /** 逐段把快照里的旧样式应用回去（样式类记录的撤销） */
+  private applySpanStyles(spans: Array<SpanSnapshot>, start: number) {
+    let cursor = start;
+    for (const span of spans) {
+      if (span.kind === 'text' && span.textStyle !== undefined) {
+        this.contentController.updateSpanStyle({
+          textStyle: span.textStyle,
+          start: cursor,
+          end: cursor + span.length,
+        });
+      }
+      cursor += span.length;
+    }
+  }
+
+  /** 逐段把快照里的旧对齐应用回去 */
+  private applyParagraphAligns(spans: Array<SpanSnapshot>, start: number) {
+    let cursor = start;
+    for (const span of spans) {
+      const align = span.paragraphStyle?.textAlign;
+      if (span.kind === 'text' && align !== undefined) {
+        this.contentController.updateParagraphStyle({
+          style: { textAlign: align },
+          start: cursor,
+          end: cursor + span.length,
+        });
+      }
+      cursor += span.length;
+    }
+  }
+
+  /**
+   * 构造一条样式类记录：把 [start, end) 区间内**逐段**的现有样式抓下来作为"旧样式"。
+   *
+   * 必须逐段抓 —— 比如选中的一半是粗体一半是正常体，撤销要还原成"混合"状态，
+   * 统一的样式表达不了。
+   */
+  private buildStyleRecord(kind: 'textStyle' | 'paragraph', start: number, end: number): ChangeRecord {
+    const record = new ChangeRecord();
+    record.kind = kind;
+    record.beforeStart = start;
+    record.beforeSpans = clipSpans(this.contentController.getSpans({ start: start, end: end }), start, end);
+    return record;
   }
 
   /** 按顺序把一组快照插回编辑器。游标用快照自带的 length 推进，不依赖 span 之间无缝衔接 */
@@ -504,17 +586,19 @@ export class MemoEditorController {
     // 无论有无选区，都让"后续输入样式"跟随工具栏状态
     this.applyTypingStyle();
     if (start < 0 || end <= start) {
-      // 无选区：样式作用于此后输入的内容，已有内容不变
+      // 无选区：样式只作用于此后输入的内容，已有内容没变 —— 不产生历史记录
       return;
     }
-    // 更新文本样式
+    // 框架不会通知程序化的样式变更（实测 updateSpanStyle 不触发内容回调），必须手动记录。
+    // 先把本区间的逐段旧样式抓下来，再应用新样式
+    const record = this.buildStyleRecord('textStyle', start, end);
+    record.afterTextStyle = textStyle;
     this.contentController.updateSpanStyle({
       textStyle: textStyle,
       start: start,
       end: end,
     });
-    // 样式变更不记录历史：它不改变文本长度，跳过不影响后续记录的坐标，是安全的。
-    // 若实测发现 updateSpanStyle 也会触发 onWillChange/onDidChange，撤销链路会自动覆盖它（P4 验证）
+    this.pushRecord(record);
   }
 
   /**
@@ -526,14 +610,18 @@ export class MemoEditorController {
     const selection = this.contentController.getSelection();
     // 当未选中内容时，计算当前段落起始范围
     const pRange = this.getParagraphRange(selection.selection[0] ?? 0, selection.selection[1] ?? 0);
+    const pStart = pRange.start ?? 0;
+    const pEnd = pRange.end ?? 0;
+    // 同 updateTextStyle：框架不通知，手动记录被改段落原有的对齐方式
+    const record = this.buildStyleRecord('paragraph', pStart, pEnd);
+    record.afterAlign = paragraphStyle.textAlign;
     // 获取指定范围的段落信息
     this.contentController.updateParagraphStyle({
       style: paragraphStyle,
-      start: pRange.start,
-      end: pRange.end,
+      start: pStart,
+      end: pEnd,
     });
-    // 段落对齐属于 P4 范围：它的恢复必须走 updateParagraphStyle，
-    // 用"删了重插"会拆开/合并段落
+    this.pushRecord(record);
   }
 
   /**
