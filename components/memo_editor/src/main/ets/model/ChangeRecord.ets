@@ -50,8 +50,16 @@ export type ChangeKind = 'content' | 'textStyle' | 'paragraph';
 export class ChangeRecord {
   /** 记录类型，默认是内容增删 */
   kind: ChangeKind = 'content';
-  /** 变更发生的位置：撤销后光标落在这里 */
+  /** 变更区间的起点（用于判断连续输入的位置衔接） */
   changeStart: number = 0;
+  /**
+   * 变更发生【前】光标所在的位置，撤销后光标回到这里。
+   *
+   * 之所以单独存、而不是用区间起点推算：退格删 "cde" 时区间是 [2,5)、光标在 5，
+   * 而前向删除时光标在区间起点 —— 两种方向用区间起点都推不对，直接抓实测值最稳。
+   * （实测 onWillChange 触发时 getSelection() 返回的仍是变更前的选区）
+   */
+  caretBefore: number = 0;
   /** 变更前的那一侧：起点 + 完整内容（可能跨越多个 span） */
   beforeStart: number = 0;
   beforeSpans: Array<SpanSnapshot> = [];

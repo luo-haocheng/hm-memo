@@ -15,6 +15,33 @@ import { probeProgrammatic } from '../common/UndoProbe';
 const FILE_IMAGE_BORDER_RADIUS = 12;
 const FILE_IMAGE_VERTICAL_MARGIN = 12;
 
+// 连续同类编辑动作合并成一条历史的时间窗（毫秒）。超过则视为两次独立操作
+const MERGE_WINDOW_MS = 500;
+// 历史上限：超出后从最早的记录开始丢弃
+const MAX_HISTORY_RECORDS = 100;
+
+/**
+ * 插入类记录：框架给了"变更后"的新内容。
+ *
+ * 注意**不能**用 "beforeSpans 为空" 来判定纯插入 —— 我们的记录存的是「变更位置所在的整个 span」，
+ * 所以连续输入时第二条记录的 beforeSpans 里是上一条的内容（输入 b 时 before=["a"]），并不为空。
+ * `afterSpans` 是否为空恰好对应捕获时的两个分支，用它更准确。
+ */
+function isInsertRecord(record: ChangeRecord): boolean {
+  return record.afterSpans.length > 0;
+}
+
+/** 删除类记录：纯删除分支 —— 框架不给新侧，所以 after 为空 */
+function isDeleteRecord(record: ChangeRecord): boolean {
+  return record.afterSpans.length === 0 && record.beforeSpans.length > 0;
+}
+
+/** 两侧都只含文本（不含图片）—— 含图的记录不参与合并 */
+function isTextOnly(record: ChangeRecord): boolean {
+  return record.beforeSpans.every((span) => span.kind === 'text')
+    && record.afterSpans.every((span) => span.kind === 'text');
+}
+
 /**
  * 取「变更点处」生效的文本样式。
  *
@@ -116,6 +143,11 @@ export class MemoEditorController {
   private isRestoring: boolean = false;
   // 原子区间嵌套深度：大于 0 时，期间捕获的多条记录会合并成一条
   private atomicDepth: number = 0;
+  // 本原子区间第一条记录会落在的下标。原子合并只能发生在本次区间产生的记录之间 ——
+  // 否则"插入图片"的原子块会把图片并进之前那条打字记录里，撤销时文字和图片一起消失
+  private atomicStartIdx: number = 0;
+  // 上一条记录产生的时间，用于判断是否落在合并时间窗内（0 表示没有可合并的上一条）
+  private lastRecordTime: number = 0;
   // 段落对齐样式及其点击回调
   alignInfoArr: AlignmentInfo[] = [
     {
@@ -142,6 +174,7 @@ export class MemoEditorController {
     this.historyRecords = [new ChangeRecord()];
     this.historyLength = 1;
     this.currRecordIdx = 0;
+    this.lastRecordTime = 0;
   }
 
   /** 开始一段不记录历史的操作（重建编辑器内容会触发大量变更回调，必须抑制） */
@@ -186,6 +219,8 @@ export class MemoEditorController {
 
     const record = new ChangeRecord();
     record.changeStart = rangeStart;
+    // onWillChange 触发时编辑器还没更新选区，这里读到的是变更【前】的光标位置
+    record.caretBefore = this.contentController.getSelection().selection[0] ?? rangeStart;
 
     if (afterRaw.length === 0) {
       // ---- 纯删除：框架不给新侧，用 rangeBefore 精确表达 ----
@@ -289,6 +324,9 @@ export class MemoEditorController {
    * 否则撤销一次只会退掉其中一步。
    */
   beginAtomic() {
+    if (this.atomicDepth === 0) {
+      this.atomicStartIdx = this.currRecordIdx + 1;
+    }
     this.atomicDepth += 1;
   }
 
@@ -299,17 +337,141 @@ export class MemoEditorController {
     }
   }
 
-  /** 记录入栈。原子区间内并入栈顶；否则截断"未来"（撤销后再编辑会让重做栈失效）后入栈 */
+  /**
+   * 记录入栈。
+   * 优先尝试合并（原子操作 > 连续同类编辑）；否则截断"未来"（撤销后再编辑会让重做栈失效）后入栈，
+   * 并在超出上限时淘汰最早的记录。
+   */
   private pushRecord(record: ChangeRecord) {
-    if (this.atomicDepth > 0 && this.mergeIntoTop(record)) {
+    // 原子合并：只并进"本次原子区间已经产生的记录"，不能并进进入区间之前就有的记录
+    if (this.atomicDepth > 0 && this.currRecordIdx >= this.atomicStartIdx
+      && this.mergeIntoTop(record)) {
+      this.lastRecordTime = new Date().getTime();
+      return;
+    }
+    if (this.mergeByWindow(record)) {
+      this.lastRecordTime = new Date().getTime();
       return;
     }
     if (this.currRecordIdx < this.historyRecords.length - 1) {
       this.historyRecords.splice(this.currRecordIdx + 1);
     }
     this.historyRecords.push(record);
-    this.historyLength = this.historyRecords.length;
     this.currRecordIdx = this.historyRecords.length - 1;
+    this.lastRecordTime = new Date().getTime();
+    this.evictIfNeeded();
+  }
+
+  /** 超出条数上限时从最早的记录开始丢弃（基线也会被丢掉，之后最早那条就撤不动了） */
+  private evictIfNeeded() {
+    const overflow = this.historyRecords.length - MAX_HISTORY_RECORDS;
+    if (overflow <= 0) {
+      this.historyLength = this.historyRecords.length;
+      return;
+    }
+    this.historyRecords.splice(0, overflow);
+    this.currRecordIdx = Math.max(0, this.currRecordIdx - overflow);
+    this.historyLength = this.historyRecords.length;
+    console.info(`[undo] 历史超限，淘汰最早的 ${overflow} 条记录`);
+  }
+
+  /**
+   * 连续同类编辑的合并（打字 / 连续删除）。
+   *
+   * 判据是**白名单**：只放明确安全的进来 —— 漏掉一个打断条件的后果是"一次撤销吃掉一大段"，
+   * 比"该合并的没合并"严重得多。因此要求：
+   *   - 只在历史末端合并（撤销过再编辑属于分叉，不能并进旧记录）
+   *   - 两类都必须是 content、纯插入或纯删除、且只含文本
+   *   - 位置连续（输入看光标衔接，删除看区间相邻或同位置）
+   *   - 落在合并时间窗内
+   */
+  private mergeByWindow(record: ChangeRecord): boolean {
+    if (this.currRecordIdx < 1 || this.currRecordIdx !== this.historyRecords.length - 1) {
+      return false;
+    }
+    if (this.lastRecordTime === 0) {
+      return false;
+    }
+    if (new Date().getTime() - this.lastRecordTime > MERGE_WINDOW_MS) {
+      return false;
+    }
+    const top = this.historyRecords[this.currRecordIdx];
+    if (top.kind !== 'content' || record.kind !== 'content') {
+      return false;
+    }
+    if (!isTextOnly(top) || !isTextOnly(record)) {
+      return false;
+    }
+
+    if (isInsertRecord(top) && isInsertRecord(record)) {
+      return this.mergeInsertIntoTop(top, record);
+    }
+    if (isDeleteRecord(top) && isDeleteRecord(record)) {
+      return this.mergeDeleteIntoTop(top, record);
+    }
+    return false;
+  }
+
+  /**
+   * 连续输入：记录是"层层覆盖"的关系（after 越来越大），
+   * 所以保留最早的 before，after 用最新的覆盖即可。
+   */
+  private mergeInsertIntoTop(top: ChangeRecord, record: ChangeRecord): boolean {
+    // 位置连续：这次输入接在上次输入结束处
+    if (record.changeStart !== top.caretAfter || record.afterStart < top.afterStart) {
+      return false;
+    }
+    const merged: Array<SpanSnapshot> = [];
+    const headLength = record.afterStart - top.afterStart;
+    if (headLength > 0) {
+      for (const span of takePrefix(top.afterSpans, headLength)) {
+        merged.push(span);
+      }
+    }
+    for (const span of record.afterSpans) {
+      merged.push(span);
+    }
+    top.afterSpans = merged;
+    top.caretAfter = record.caretAfter;
+    return true;
+  }
+
+  /**
+   * 连续删除：关系与输入相反，是"各自向前推进"，
+   * 所以要在 before 侧按文档顺序把两次删掉的内容拼起来，after 保持为空。
+   */
+  private mergeDeleteIntoTop(top: ChangeRecord, record: ChangeRecord): boolean {
+    const topStart = top.beforeStart;
+    const topEnd = topStart + spansTotalLength(top.beforeSpans);
+    const newStart = record.beforeStart;
+    const newEnd = newStart + spansTotalLength(record.beforeSpans);
+
+    const merged: Array<SpanSnapshot> = [];
+    if (newEnd === topStart) {
+      // 退格：这次删的在栈顶那条的紧前面 → [新的][栈顶的]
+      for (const span of record.beforeSpans) {
+        merged.push(span);
+      }
+      for (const span of top.beforeSpans) {
+        merged.push(span);
+      }
+      top.beforeStart = newStart;
+    } else if (newStart === topStart) {
+      // 前向删除（Delete 键）：同一位置反复删 → [栈顶的][新的]
+      for (const span of top.beforeSpans) {
+        merged.push(span);
+      }
+      for (const span of record.beforeSpans) {
+        merged.push(span);
+      }
+    } else {
+      return false; // 两次删除不相邻，不合并
+    }
+    top.beforeSpans = merged;
+    top.afterStart = top.beforeStart;
+    // 撤销后的光标由 caretBefore 决定，它保留的是【最早那条】的值 ——
+    // 也就是连续删除开始前光标所在的位置，正是撤销后应该回到的地方
+    return true;
   }
 
   /**
@@ -390,7 +552,7 @@ export class MemoEditorController {
     const removeLength = spansTotalLength(useBefore ? record.afterSpans : record.beforeSpans);
     const insertStart = useBefore ? record.beforeStart : record.afterStart;
     const spans = useBefore ? record.beforeSpans : record.afterSpans;
-    const caret = useBefore ? record.changeStart : record.caretAfter;
+    const caret = useBefore ? record.caretBefore : record.caretAfter;
 
     // ==== 诊断日志（P5 清理）：把实际执行的删除区间与插入内容打出来 ====
     console.info(`[undo] ${useBefore ? '撤销' : '重做'}: 删除 [${removeStart}, ${removeStart + removeLength}) `
@@ -578,7 +740,7 @@ export class MemoEditorController {
    * 设置文本样式
    */
   updateTextStyle(textStyle: RichEditorTextStyle) {
-    probeProgrammatic('updateTextStyle (含 setTypingStyle + updateSpanStyle)');   // 探针
+    probeProgrammatic('updateTextStyle (含 setTypingStyle + updateSpanStyle)'); // 探针
     // 获取选中内容的范围
     const selection = this.contentController.getSelection();
     const start = selection.selection[0] ?? 0;
@@ -605,7 +767,7 @@ export class MemoEditorController {
    * 设置段落对齐方式
    */
   updateParagraphStyle(paragraphStyle: RichEditorParagraphStyle) {
-    probeProgrammatic('updateParagraphStyle');   // 探针
+    probeProgrammatic('updateParagraphStyle'); // 探针
     // 获取选中内容的范围
     const selection = this.contentController.getSelection();
     // 当未选中内容时，计算当前段落起始范围
@@ -695,7 +857,7 @@ export class MemoEditorController {
     }
     try {
       const caretOffset = this.contentController.getCaretOffset();
-      probeProgrammatic('insertBuiltinImage/addImageSpan');   // 探针
+      probeProgrammatic('insertBuiltinImage/addImageSpan'); // 探针
       this.contentController.addImageSpan(resource, {
         offset: caretOffset,
         imageStyle: builtinImageStyle(),
@@ -772,7 +934,7 @@ export class MemoEditorController {
       // 获取当前光标位置
       const caretOffset = this.contentController.getCaretOffset();
       // 添加图片（样式与撤销/重做共用同一个函数）
-      probeProgrammatic('addImage/addImageSpan + addTextSpan');   // 探针
+      probeProgrammatic('addImage/addImageSpan + addTextSpan'); // 探针
       this.contentController.addImageSpan(pixelMap, {
         offset: caretOffset,
         imageStyle: this.imageStyleForFile(pixelMap, uiContext),
