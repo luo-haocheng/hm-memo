@@ -22,9 +22,9 @@ struct MemoEditView {
   aboutToAppear(): void {
     // 启用压缩模式避让软键盘
     this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE_WITH_CARET);
-    // 清空编辑器操作记录, 恢复初始化状态
-    this.editorController.historyRecords = [];
-    this.editorController.currRecordIdx = -1;
+    // 清空编辑器操作记录并恢复初始化状态。
+    // 真正的历史基线在编辑器 onReady（内容重建完成）之后才建立
+    this.editorController.resetHistory();
     this.editorController.initState();
   }
 
@@ -56,7 +56,7 @@ struct MemoEditView {
           .borderRadius('50%')
           .fillColor($r('sys.color.font_primary'))
           .backgroundColor($r('sys.color.background_secondary'))
-          .opacity(this.editorController.currRecordIdx >= this.editorController.historyRecords.length - 1 ? 0.3 : 1)
+          .opacity(this.editorController.currRecordIdx >= this.editorController.historyLength - 1 ? 0.3 : 1)
           .onClick(() => {
             this.editorController.reDo();
           });

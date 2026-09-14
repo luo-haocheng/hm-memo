@@ -1,6 +1,8 @@
 import image from '@ohos.multimedia.image';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
+// 字体权重的反向映射搬到 SpanMapping，与撤销/重做链路共用同一份，避免两份拷贝漂移
+import { fontWeightResult2Value } from './SpanMapping';
 
 const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 
@@ -336,25 +338,6 @@ export class Memo {
     return undefined;
   }
 
-  private fontWeightResult2Value(result: number): FontWeight | number {
-    switch (result) {
-      case 9:
-        return FontWeight.Bold;
-      case 10:
-        return FontWeight.Normal;
-      case 11:
-        return FontWeight.Bolder;
-      case 12:
-        return FontWeight.Lighter;
-      case 13:
-        return FontWeight.Medium;
-      case 14:
-        return FontWeight.Regular;
-      default:
-        return (result + 1) * 100; // 0~8 对应 100~900
-    }
-  }
-
   private mapTextSpan2Block(textSpan: RichEditorTextSpanResult): MemoBlock {
     // decoration.color 走与 fontColor 相同的归一化：
     // Resource 类型无法还原（返回 undefined，回落默认装饰色），十六进制色值可安全往返
@@ -383,7 +366,7 @@ export class Memo {
         fontFamily: textSpan.textStyle.fontFamily,
         lineHeight: textSpan.textStyle.lineHeight,
         fontColor: this.normalizeColor(textSpan.textStyle.fontColor),
-        fontWeight: this.fontWeightResult2Value(textSpan.textStyle.fontWeight),
+        fontWeight: fontWeightResult2Value(textSpan.textStyle.fontWeight),
       },
       paragraphStyle: paragraphStyle,
     };

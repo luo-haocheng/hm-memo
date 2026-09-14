@@ -1,4 +1,8 @@
 import { COLOR_LIST } from '../common/Constants';
+// ==== 撤销/重做探针：临时引用，验证完删除 ====
+import {
+  probeDidChange, probeEvent, probeIMEComplete, probeIMEInput, probeSelection, probeWillChange
+} from '../common/UndoProbe';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { BUILTIN_IMAGE_CIRCLE, Memo } from '../model/Memo';
@@ -238,10 +242,14 @@ export struct MemoEditorArea {
             .barState(BarState.Off)
             .placeholder('开始书写你的笔记', { fontColor: $r('sys.color.font_tertiary') })
             .onReady(() => {
+              // 重建内容期间会触发大量内容变更回调，必须先屏蔽历史记录
+              this.controller.suspendHistory();
               // 预设文本输入样式（与工具栏状态保持一致）
               this.controller.applyTypingStyle();
               // 重建备忘内容
               this.editingMemo.rebuildContent(this.controller.contentController, this.getUIContext());
+              // 内容就位后建立历史基线（第 0 条 = 初始状态，不可撤销回去）
+              this.controller.resumeHistoryAndReset();
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
@@ -249,6 +257,28 @@ export struct MemoEditorArea {
               if (!editStatus) {
                 this.controller.showToolBarIndex = 0;
               }
+            })
+            // ==== 撤销/重做探针：临时挂载，验证完删除本段 ====
+            .onWillChange((value: RichEditorChangeValue) => {
+              probeWillChange(value, this.controller.contentController);   // 探针（P5 删除）
+              this.controller.onWillChange(value);
+              return true;
+            })
+            .onDidChange((rangeBefore: TextRange, rangeAfter: TextRange) => {
+              probeDidChange(rangeBefore, rangeAfter, this.controller.contentController);   // 探针（P5 删除）
+            })
+            .onSelectionChange((range: RichEditorRange) => {
+              probeSelection(range);
+            })
+            .aboutToIMEInput((value: RichEditorInsertValue) => {
+              probeIMEInput(value);
+              return true;
+            })
+            .onIMEInputComplete((span: RichEditorTextSpanResult) => {
+              probeIMEComplete(span);
+            })
+            .onPaste(() => {
+              probeEvent('onPaste');
             });
         }
         .width('100%');
