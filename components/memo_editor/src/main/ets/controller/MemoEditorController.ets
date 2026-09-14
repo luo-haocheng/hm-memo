@@ -8,8 +8,6 @@ import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
 import { display } from '@kit.ArkUI';
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
-// ==== 撤销/重做探针：临时引用，验证完删除 ====
-import { probeProgrammatic } from '../common/UndoProbe';
 
 // 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
 const FILE_IMAGE_BORDER_RADIUS = 12;
@@ -248,11 +246,6 @@ export class MemoEditorController {
         : [];
       // 新内容的样式沿用变更点处的样式，不用 replacedSpans 自带的（原因见 styleAt 的注释）
       const inheritedStyle = styleAt(beforeRaw, rangeStart);
-      // ==== 诊断日志（P5 清理） ====
-      console.info(`[undo] 继承样式: ${inheritedStyle !== undefined
-        ? `fontSize=${inheritedStyle.fontSize} lineHeight=${inheritedStyle.lineHeight}`
-        : '(未找到 → 会沿用 replacedSpans 的原始样式)'} `
-        + `; 变更点附近 span 数=${beforeRaw.length}`);
       for (const span of toSnapshots(afterRaw)) {
         if (span.kind === 'text' && inheritedStyle !== undefined) {
           span.textStyle = inheritedStyle;
@@ -266,16 +259,6 @@ export class MemoEditorController {
     // 重做后的光标：变更结束处（估算）。插入时 = 变更起点 + 净增长度；删除时 = 变更起点
     const delta = spansTotalLength(record.afterSpans) - spansTotalLength(record.beforeSpans);
     record.caretAfter = rangeStart + (delta > 0 ? delta : 0);
-
-    // ==== 诊断日志（P5 清理）：本条记录捕获到什么 ====
-    let headInfo = '(空)';
-    if (record.afterSpans.length > 0) {
-      const head = record.afterSpans[0];
-      headInfo = `kind=${head.kind} fontSize=${head.textStyle?.fontSize} len=${head.length}`;
-    }
-    console.info(`[undo] 捕获: changeStart=${rangeStart} 分支=${afterRaw.length === 0 ? '纯删除' : '插入'} `
-      + `旧侧起点=${record.beforeStart} 旧侧长=${spansTotalLength(record.beforeSpans)} `
-      + `新侧起点=${record.afterStart} 新侧长=${spansTotalLength(record.afterSpans)} 新侧首段(${headInfo})`);
 
     this.pushRecord(record);
   }
@@ -517,9 +500,6 @@ export class MemoEditorController {
     // 样式类记录不碰内容：段落样式是段落级属性，删了重插会把段落拆开 / 合并
     if (record.kind === 'textStyle') {
       const rangeLength = spansTotalLength(record.beforeSpans);
-      // ==== 诊断日志（P5 清理） ====
-      console.info(`[undo] ${useBefore ? '撤销' : '重做'}字符样式: 范围 `
-        + `[${record.beforeStart}, ${record.beforeStart + rangeLength}) 共 ${record.beforeSpans.length} 段`);
       if (useBefore) {
         this.applySpanStyles(record.beforeSpans, record.beforeStart);
       } else {
@@ -533,9 +513,6 @@ export class MemoEditorController {
     }
     if (record.kind === 'paragraph') {
       const rangeLength = spansTotalLength(record.beforeSpans);
-      // ==== 诊断日志（P5 清理） ====
-      console.info(`[undo] ${useBefore ? '撤销' : '重做'}段落对齐: 范围 `
-        + `[${record.beforeStart}, ${record.beforeStart + rangeLength}) 共 ${record.beforeSpans.length} 段`);
       if (useBefore) {
         this.applyParagraphAligns(record.beforeSpans, record.beforeStart);
       } else {
@@ -553,19 +530,6 @@ export class MemoEditorController {
     const insertStart = useBefore ? record.beforeStart : record.afterStart;
     const spans = useBefore ? record.beforeSpans : record.afterSpans;
     const caret = useBefore ? record.caretBefore : record.caretAfter;
-
-    // ==== 诊断日志（P5 清理）：把实际执行的删除区间与插入内容打出来 ====
-    console.info(`[undo] ${useBefore ? '撤销' : '重做'}: 删除 [${removeStart}, ${removeStart + removeLength}) `
-      + `→ 在 ${insertStart} 插入 ${spans.length} 段，光标 ${caret}`);
-    for (let i = 0; i < spans.length; i++) {
-      const span = spans[i];
-      const raw = span.value;
-      const shown = raw.length > 24 ? `${raw.substring(0, 24)}...` : raw;
-      console.info(`[undo]   span[${i}] kind=${span.kind} len=${span.length} `
-        + `fontSize=${span.textStyle?.fontSize} lineHeight=${span.textStyle?.lineHeight} `
-        + `hasPixelMap=${span.imagePixelMap !== undefined} hasResource=${span.imageResource !== undefined} `
-        + `value="${shown.replace(/\n/g, '\\n')}"`);
-    }
 
     if (removeLength > 0) {
       this.contentController.deleteSpans({ start: removeStart, end: removeStart + removeLength });
@@ -740,7 +704,6 @@ export class MemoEditorController {
    * 设置文本样式
    */
   updateTextStyle(textStyle: RichEditorTextStyle) {
-    probeProgrammatic('updateTextStyle (含 setTypingStyle + updateSpanStyle)'); // 探针
     // 获取选中内容的范围
     const selection = this.contentController.getSelection();
     const start = selection.selection[0] ?? 0;
@@ -767,7 +730,6 @@ export class MemoEditorController {
    * 设置段落对齐方式
    */
   updateParagraphStyle(paragraphStyle: RichEditorParagraphStyle) {
-    probeProgrammatic('updateParagraphStyle'); // 探针
     // 获取选中内容的范围
     const selection = this.contentController.getSelection();
     // 当未选中内容时，计算当前段落起始范围
@@ -857,7 +819,6 @@ export class MemoEditorController {
     }
     try {
       const caretOffset = this.contentController.getCaretOffset();
-      probeProgrammatic('insertBuiltinImage/addImageSpan'); // 探针
       this.contentController.addImageSpan(resource, {
         offset: caretOffset,
         imageStyle: builtinImageStyle(),
@@ -934,7 +895,6 @@ export class MemoEditorController {
       // 获取当前光标位置
       const caretOffset = this.contentController.getCaretOffset();
       // 添加图片（样式与撤销/重做共用同一个函数）
-      probeProgrammatic('addImage/addImageSpan + addTextSpan'); // 探针
       this.contentController.addImageSpan(pixelMap, {
         offset: caretOffset,
         imageStyle: this.imageStyleForFile(pixelMap, uiContext),

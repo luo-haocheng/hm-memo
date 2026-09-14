@@ -1,8 +1,4 @@
 import { COLOR_LIST } from '../common/Constants';
-// ==== 撤销/重做探针：临时引用，验证完删除 ====
-import {
-  probeDidChange, probeEvent, probeIMEComplete, probeIMEInput, probeSelection, probeWillChange
-} from '../common/UndoProbe';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { BUILTIN_IMAGE_CIRCLE, Memo } from '../model/Memo';
@@ -258,27 +254,10 @@ export struct MemoEditorArea {
                 this.controller.showToolBarIndex = 0;
               }
             })
-            // ==== 撤销/重做探针：临时挂载，验证完删除本段 ====
+            // 撤销/重做的唯一捕获入口：变更【前】在此把两侧内容一次取齐（详见 onWillChange 的注释）
             .onWillChange((value: RichEditorChangeValue) => {
-              probeWillChange(value, this.controller.contentController);   // 探针（P5 删除）
               this.controller.onWillChange(value);
               return true;
-            })
-            .onDidChange((rangeBefore: TextRange, rangeAfter: TextRange) => {
-              probeDidChange(rangeBefore, rangeAfter, this.controller.contentController);   // 探针（P5 删除）
-            })
-            .onSelectionChange((range: RichEditorRange) => {
-              probeSelection(range);
-            })
-            .aboutToIMEInput((value: RichEditorInsertValue) => {
-              probeIMEInput(value);
-              return true;
-            })
-            .onIMEInputComplete((span: RichEditorTextSpanResult) => {
-              probeIMEComplete(span);
-            })
-            .onPaste(() => {
-              probeEvent('onPaste');
             });
         }
         .width('100%');
