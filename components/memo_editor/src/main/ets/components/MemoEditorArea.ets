@@ -40,7 +40,6 @@ export struct MemoEditorArea {
             .blockSize({ width: 12, height: 12 })
             .blockStyle({ type: SliderBlockType.IMAGE, image: $r('app.media.font_setting') })
             .onChange((value: number) => {
-              // todo
               this.controller.fontSize = value;
               this.controller.updateTextStyle({
                 fontSize: this.controller.fontSize,
@@ -78,7 +77,6 @@ export struct MemoEditorArea {
                 .borderColor(this.controller.colorIdx === index ? Color.Red : Color.Black);
             }
             .onClick(() => {
-              // todo
               this.controller.colorIdx = index;
               this.controller.updateTextStyle({
                 fontColor: COLOR_LIST[this.controller.colorIdx]
@@ -254,10 +252,15 @@ export struct MemoEditorArea {
                 this.controller.showToolBarIndex = 0;
               }
             })
-            // 撤销/重做的唯一捕获入口：变更【前】在此把两侧内容一次取齐（详见 onWillChange 的注释）
+            // 撤销/重做的捕获入口：变更【前】在此把两侧内容一次取齐（详见 onWillChange 的注释）
             .onWillChange((value: RichEditorChangeValue) => {
               this.controller.onWillChange(value);
               return true;
+            })
+            // 维持「相册图片单独成段」：变更【后】检查紧邻的图片，前后缺换行就补上
+            //（详见 onDidChange 的注释；这里只用到 rangeAfter）
+            .onDidChange((_rangeBefore: TextRange, rangeAfter: TextRange) => {
+              this.controller.onDidChange(rangeAfter, this.getUIContext());
             });
         }
         .width('100%');

@@ -104,6 +104,103 @@ function takePrefix(spans: Array<SpanSnapshot>, length: number): Array<SpanSnaps
   return result;
 }
 
+/**
+ * neighborAt 的返回值 —— 编辑器坐标某处的单元类型
+ * - `'newline'`  换行符
+ * - `'other'`    其它内容（普通字符，或图片这类原子单元）
+ * - `'boundary'` 文档边界之外
+ */
+type NeighborKind = 'newline' | 'other' | 'boundary';
+
+/**
+ * 判定编辑器坐标 pos 处是什么单元。
+ *
+ * 必须拿 spanRange（**编辑器坐标**）反查，不能拿 toStyledString 的纯文本下标去比 ——
+ * 图片在纯文本里占几个字符没有定义，文档里一旦有图片，两套坐标就错位。
+ *
+ * `'boundary'` 这一态不能省：文档为空、或光标在文末时，"该位置什么都没有"与
+ * "该位置是图片"是两回事，混作一谈会平白多补一个换行。
+ */
+function neighborAt(spans: Array<RichEditorSpan>, pos: number): NeighborKind {
+  if (pos < 0) {
+    return 'boundary';
+  }
+  for (const span of spans) {
+    const range = span.spanPosition.spanRange;
+    if (pos < range[0] || pos >= range[1]) {
+      continue;
+    }
+    if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
+      return 'other'; // 图片是原子单元，永远不是换行
+    }
+    // 用 charAt 而不是下标取值：越界时返回空串，与 '\n' 比较自然是 'other'，无需额外判界
+    return (span as RichEditorTextSpanResult).value.charAt(pos - range[0]) === '\n' ? 'newline' : 'other';
+  }
+  return 'boundary'; // 没有 span 覆盖 → 文档边界之外
+}
+
+/** 取覆盖编辑器坐标 pos 的文本 span；该位置是图片或越界时返回 undefined */
+function textSpanAt(spans: Array<RichEditorSpan>, pos: number): RichEditorTextSpanResult | undefined {
+  if (pos < 0) {
+    return undefined;
+  }
+  for (const span of spans) {
+    const range = span.spanPosition.spanRange;
+    if (pos < range[0] || pos >= range[1]) {
+      continue;
+    }
+    if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
+      return undefined;
+    }
+    return span as RichEditorTextSpanResult;
+  }
+  return undefined;
+}
+
+/**
+ * 是不是「相册图片」—— 与 mapImageSpan2Block 同一口径：
+ * 内置图走 valueResourceStr，相册图走 valuePixelMap。
+ *
+ * ⚠️ 剪贴板粘贴进来的图片同样是 pixelMap，在编辑器里与相册图**区分不开**，
+ * 所以它也会被一并纳入「单独成段」的维护范围。
+ */
+function isAlbumPhoto(span: RichEditorSpan): boolean {
+  const imageSpan = span as RichEditorImageSpanResult;
+  return imageSpan.imageStyle !== undefined
+    && !imageSpan.valueResourceStr
+    && imageSpan.valuePixelMap !== undefined;
+}
+
+/**
+ * 一处待补的段落分隔：在 offset 处插一个换行，让相册图片重新独占一段。
+ * 样式取自紧邻的文本 span（见 buildParagraphFix）
+ */
+interface ParagraphFix {
+  offset: number;
+  style: RichEditorTextStyle;
+  paragraphStyle?: RichEditorParagraphStyle;
+}
+
+/**
+ * 新内容里是否含换行符或图片。
+ *
+ * 这两类在框架里永远**单独成 span**（实测："换行会切开 span"；图片占 1 个坐标单位、与文本无缝拼接），
+ * 所以它们出现在 onWillChange 的新侧时，变更点右侧那段没动过的文字一定没被带进来 ——
+ * 而普通文字输入会并进所在的 span，返回的是完整的整段。
+ * 这个差别是判断"要不要补尾部"的依据之一（见 onWillChange 里尾部对齐那段）。
+ */
+function hasSpanBreakingContent(spans: Array<RichEditorSpan>): boolean {
+  for (const span of spans) {
+    if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
+      return true;
+    }
+    if ((span as RichEditorTextSpanResult).value.indexOf('\n') >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 @ObservedV2
 export class MemoEditorController {
   private static _instance: MemoEditorController;
@@ -139,6 +236,8 @@ export class MemoEditorController {
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
   private isRestoring: boolean = false;
+  // 正在补「图片单独成段」的换行：补换行本身会同步触发一轮 willChange / didChange，用它防递归
+  private isRepairing: boolean = false;
   // 原子区间嵌套深度：大于 0 时，期间捕获的多条记录会合并成一条
   private atomicDepth: number = 0;
   // 本原子区间第一条记录会落在的下标。原子合并只能发生在本次区间产生的记录之间 ——
@@ -205,7 +304,8 @@ export class MemoEditorController {
     const rangeStart = value.rangeBefore.start ?? 0;
     const rangeEnd = value.rangeBefore.end ?? 0;
 
-    // 新侧：框架给的就是「变更后的整 span」，无需裁剪
+    // 新侧：框架给的是「变更后覆盖变更区域的 span」。两种形态都有 ——
+    // 普通文字输入返回所在整段，换行 / 图片只返回新内容本身（判别见下面"尾部对齐"那段）
     const afterRaw: Array<RichEditorSpan> = [];
     for (const span of value.replacedSpans) {
       afterRaw.push(span);
@@ -241,7 +341,10 @@ export class MemoEditorController {
       // 必须把「变更点之前那截未改动的内容」补到新侧前面，让两侧从同一起点开始；
       // 否则撤销时按新侧范围删除会漏掉那截内容，再把旧侧插回去就成了重复内容。
       const rawAfterStart = afterRaw[0].spanPosition.spanRange[0];
-      const afterSpans: Array<SpanSnapshot> = rawAfterStart > record.beforeStart
+      // 框架返回的第一段起点落在变更点之后 → 它给的是「从变更点开始的新 span」，
+      // 而不是「变更位置所在的整个 span」，右侧那段没被动过的文字也就没被带上
+      const afterStartsAtChange = rawAfterStart > record.beforeStart;
+      const afterSpans: Array<SpanSnapshot> = afterStartsAtChange
         ? clipSpans(beforeRaw, record.beforeStart, rawAfterStart)
         : [];
       // 新内容的样式沿用变更点处的样式，不用 replacedSpans 自带的（原因见 styleAt 的注释）
@@ -252,6 +355,39 @@ export class MemoEditorController {
         }
         afterSpans.push(span);
       }
+
+      // 尾部对齐 —— 与上面那截前导是同一问题的【镜像】。
+      // 旧侧取的是「变更位置所在的整 span」，新侧却可能只有框架给的「变更区域」，
+      // 于是变更点【右侧】那段没被动过的文字不在新侧里，两侧的覆盖范围对不上：
+      // 撤销时按新侧范围删除删不到那截，再把旧侧插回去就成了重复内容。
+      //（abc → 光标移到开头插图 → 撤销 → abcabc；abc → 在 b 后插图 → 撤销 → abcc）
+      //
+      // ⚠️ 不能拿"长度"当"覆盖范围"的代理：插入的字符数会把长度差填平。
+      //    abc 的 b 后插换行时，旧侧 3 个字、新侧（前导 ab + 换行）也是 3 个字，
+      //    长度相等，但右侧那个 c 照样没被覆盖 —— 长度比较会漏判。
+      //
+      // 难点是框架有两种返回形态，而 onWillChange 里拿不到区分它们的信息
+      //（能区分的是 rangeAfter，只在 onDidChange 上）：
+      //    普通文字输入 → 并进所在 span，返回的是**整段**，尾部已经在里面
+      //    换行 / 图片   → 永远单独成 span，只返回新内容，尾部不在里面
+      // 所以只在**能确定尾部不在里面**时才补，下面三条满足其一即补：
+      //    ① 前导非空：框架返回的是「从变更点开始的新 span」而非所在整段，右侧同理没带上
+      //    ② 纯插入且新侧没盖过旧侧末尾：净增长 ≥ 1 时返回整段必然盖过旧侧末尾，
+      //       盖不过就一定是「只有新内容」这一形态
+      //    ③ 新内容含换行或图片：这两类永远单独成 span，从不与右侧文字合并
+      // 已知盲区：纯插入 + 变更点恰在 span 开头 + 插入的是不含换行的多字符文本且长于右侧剩余
+      //（例如在 3 个字的段落开头粘贴 10 个字）—— 它与「同位置普通打字」的签名完全相同，
+      //  不引入 rangeAfter 无解。真遇到再走 onDidChange 方案
+      const beforeEnd = record.beforeStart + spansTotalLength(record.beforeSpans);
+      const afterEnd = record.beforeStart + spansTotalLength(afterSpans);
+      const tailLength = beforeEnd - rangeEnd;
+      if (tailLength > 0 && (afterStartsAtChange
+        || (rangeStart === rangeEnd && (afterEnd <= beforeEnd || hasSpanBreakingContent(afterRaw))))) {
+        for (const span of clipSpans(beforeRaw, rangeEnd, beforeEnd)) {
+          afterSpans.push(span);
+        }
+      }
+
       record.afterStart = record.beforeStart;
       record.afterSpans = afterSpans;
     }
@@ -261,6 +397,128 @@ export class MemoEditorController {
     record.caretAfter = rangeStart + (delta > 0 ? delta : 0);
 
     this.pushRecord(record);
+  }
+
+  /**
+   * onDidChange —— 变更【后】触发，用来维持「相册图片单独成段」。
+   *
+   * 【为什么放在变更后】修复依据的是变更【后】的真实内容，只有这里读得到
+   *（onWillChange 里 getSpans() 拿到的还是旧内容）。而且这里能拿到精确的 rangeAfter，
+   * onWillChange 没有这个字段 —— 用它圈出扫描窗口，不必每次按键都全量扫全文。
+   *
+   * 【为什么是"放行 + 事后修复"，而不是在 onWillChange 里拦截、改写用户操作】
+   * 越界操作不止"删换行"一种：图片前后打字、粘贴、跨段选区删除都会破坏。
+   * 要拦截就得重放用户的输入，而重放要从 replacedSpans 还原"用户敲了什么" ——
+   * 它的语义是把没改动的旧内容和新内容合并成同一个 span、样式还报写入前的原始值
+   *（见 UNDO_REDO_PLAN §二），还原不了。放行 + 事后修复是"看结果说话"，对入口不敏感。
+   *
+   * ⚠️ 只管相册图片：内置圆环图是刻意行内插入的（见 insertBuiltinImage），不受这条原则约束。
+   */
+  onDidChange(rangeAfter: TextRange, uiContext: UIContext) {
+    // 重建内容 / 撤销重做期间不插手：那些变更不来自用户编辑。
+    // isRepairing 是防递归 —— 下面补换行会同步触发一轮 willChange / didChange
+    if (this.isRestoring || this.isRepairing) {
+      return;
+    }
+    const rangeStart = rangeAfter.start ?? 0;
+    const rangeEnd = rangeAfter.end ?? 0;
+    // 只有紧挨变更点的图片才可能被破坏：变更点左边一格、右边一格。
+    // 多取一格是必要的 —— 纯删除时 rangeAfter 是空区间，图片正好落在它两侧
+    const from = Math.max(0, Math.min(rangeStart, rangeEnd) - 1);
+    const to = Math.max(rangeStart, rangeEnd) + 1;
+
+    let spans: Array<RichEditorSpan>;
+    try {
+      spans = this.contentController.getSpans({ start: from, end: to });
+    } catch (error) {
+      console.error(`[image] 读取变更周边内容失败: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 用 Map 按插入位置去重：两张相邻图片时，前一张的"后侧"和后一张的"前侧"
+    // 指向同一个插入位置，各插一个会凭空多出空段落
+    const fixes: Map<number, ParagraphFix> = new Map<number, ParagraphFix>();
+    for (const span of spans) {
+      if (!isAlbumPhoto(span)) {
+        continue;
+      }
+      const range = span.spanPosition.spanRange;
+      // 前侧：左边是普通字符或另一张图 → 图片已经和它挤在同一段了
+      if (neighborAt(spans, range[0] - 1) === 'other') {
+        fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
+      }
+      // 后侧同理
+      if (neighborAt(spans, range[1]) === 'other') {
+        fixes.set(range[1], this.buildParagraphFix(range[1], range[1], spans, uiContext));
+      }
+    }
+    if (fixes.size === 0) {
+      return;
+    }
+    const pending: Array<ParagraphFix> = [];
+    for (const fix of fixes.values()) {
+      pending.push(fix);
+    }
+    this.applyParagraphFixes(pending);
+  }
+
+  /**
+   * 组装一处待补的换行。
+   *
+   * 样式取紧邻那个【文本】span 的：补出来的换行会并进它所在的那一段，
+   * 样式不同就可能把段落拆成两个、对齐方式跟着漂移（与 addImage 里前置换行同一个理由）。
+   * refPosition 处是图片（两张图挨着）或取不到文本时，回落输入样式。
+   */
+  private buildParagraphFix(offset: number, refPosition: number,
+    spans: Array<RichEditorSpan>, uiContext: UIContext): ParagraphFix {
+    const refSpan = textSpanAt(spans, refPosition);
+    const refParagraph = refSpan ? refSpan.paragraphStyle : undefined;
+    return {
+      offset: offset,
+      style: refSpan ? textStyleResult2Style(refSpan.textStyle) : this.effectiveTypingStyle(uiContext),
+      paragraphStyle: refParagraph ? { textAlign: refParagraph.textAlign } : undefined,
+    };
+  }
+
+  /**
+   * 逐处补上换行。
+   *
+   * 【从右往左插】先动手的必须是靠后的位置，否则前面几处的坐标会被推移。
+   *
+   * 【光标校正】只把插在光标【之前】的换行计入位移，**恰好插在光标位置上的不推**。
+   * 这条决定了图片前后打字的手感，以"图片前打一个 x"为例：
+   *   abc\n[img] → 打完 x 变成 abc\nx[img]，补一个换行到 x 后面
+   *   不推光标 → 光标留在 x 之后，再打 y 得到 abc\nxy\n[img]，天然就不破坏了
+   *   若改成右推 → 光标落到图片段首，打 y 又破坏、又补一行，每打一个字就多一行
+   * 对"删掉换行"则表现为把删除换成了"向前移动光标"：内容回到原样，光标停在换行之前。
+   */
+  private applyParagraphFixes(fixes: Array<ParagraphFix>) {
+    fixes.sort((a, b) => b.offset - a.offset);
+    const caret = this.contentController.getCaretOffset();
+    let shift = 0;
+    this.isRepairing = true;
+    try {
+      for (const fix of fixes) {
+        this.contentController.addTextSpan('\n', {
+          offset: fix.offset,
+          style: fix.style,
+          paragraphStyle: fix.paragraphStyle,
+        });
+        if (caret >= 0 && fix.offset < caret) {
+          shift += 1;
+        }
+      }
+      // 必须【无条件】设置，不能只在 shift > 0 时设置：
+      // 插入点恰好等于光标位置时，框架会把光标右推到插入内容之后（0 位移也要覆盖掉），
+      // 否则退格会表现为"按了没反应"—— 光标停在图片段首不动，下次退格删掉刚补的换行，来回循环
+      if (caret >= 0) {
+        this.contentController.setCaretOffset(caret + shift);
+      }
+    } catch (error) {
+      console.error(`[image] 补图片段落换行失败: ${JSON.stringify(error)}`);
+    } finally {
+      this.isRepairing = false;
+    }
   }
 
   /**
@@ -369,6 +627,13 @@ export class MemoEditorController {
    *   - 落在合并时间窗内
    */
   private mergeByWindow(record: ChangeRecord): boolean {
+    // 原子区间内不做时间窗合并：区间里"第一条"记录不能并进之前那条操作。
+    // 反例：打个字 → 立刻插图，补出来的前置换行是纯文本插入，位置又恰好衔接打字记录的光标，
+    // 不拦的话会被并进打字记录里，撤销一次连刚打的字一起退掉。
+    // （区间内后续几条仍由 mergeIntoTop 合并，不受影响）
+    if (this.atomicDepth > 0) {
+      return false;
+    }
     if (this.currRecordIdx < 1 || this.currRecordIdx !== this.historyRecords.length - 1) {
       return false;
     }
@@ -887,26 +1152,68 @@ export class MemoEditorController {
     }
   }
 
+  /**
+   * 插入相册照片。
+   *
+   * 照片必须**单独成段**：图片前一个单元、后一个单元都得是换行符。
+   * 所以这里不是无脑补两个 '\n'，而是先看插入点左右已有的邻居，缺哪个补哪个 ——
+   * 本来就有换行的地方（比如插在空行上）再补一个会多出空段落；
+   * 而在段落中间只补一个，图片又会和文字挤在同一行。
+   *
+   * 两个判定都在【变更前】的文档上一次算完：补完前置换行后，原 caret 处的字符
+   * 正好落到图片右边一格，所以"原 caret 处是不是换行"就等价于"最终图片后面是不是换行"。
+   */
   private addImage(pixelMap: image.PixelMap, uiContext: UIContext) {
-    // "插入图片" 与 "插入换行" 是同一次用户操作，用原子区间合成一条历史记录，
-    // 否则撤销一次只会退掉其中一步（先删换行、再撤才删图片）
+    // "补换行 + 插图"是同一次用户操作，用原子区间合成一条历史记录，
+    // 否则撤销一次只会退掉其中一步
     this.beginAtomic();
     try {
-      // 获取当前光标位置
-      const caretOffset = this.contentController.getCaretOffset();
+      // 获取当前光标位置：有选区时也在光标处插入，不动选中内容（与插入内置图片一致）
+      const caret = this.contentController.getCaretOffset();
+      // 取全量 span：文末插入时区间 [caret-1, caret+1) 会越过文档末尾，
+      // 全量调用没有越界风险；插图频率极低，多返回几个 span 无所谓
+      const spans = this.contentController.getSpans();
+      // 前置：左边是普通字符或图片才要补（'newline' 已经有了，'boundary' 是文档开头）
+      const needLeading = neighborAt(spans, caret - 1) === 'other';
+      // 后置：'newline' 说明已经有换行，'other'（文字/图片）和 'boundary'（文末）都要补，
+      // 保证图片后面永远另起一行、光标有处可落
+      const needTrailing = neighborAt(spans, caret) !== 'newline';
+
+      let imageOffset = caret;
+      if (needLeading) {
+        const beforeSpan = textSpanAt(spans, caret - 1);
+        const beforeParagraph = beforeSpan ? beforeSpan.paragraphStyle : undefined;
+        this.contentController.addTextSpan('\n', {
+          offset: caret,
+          // 这个换行是并进【前一段】的，样式必须跟前一段一致：样式不同就不会与前一段合并，
+          // 前一段有被拆成两段、对齐方式跟着漂移的风险。
+          // 左边是图片（取不到文本样式）时回落输入样式
+          style: beforeSpan ? textStyleResult2Style(beforeSpan.textStyle) : this.effectiveTypingStyle(uiContext),
+          paragraphStyle: beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined,
+        });
+        imageOffset += 1;
+      }
+
       // 添加图片（样式与撤销/重做共用同一个函数）
       this.contentController.addImageSpan(pixelMap, {
-        offset: caretOffset,
+        offset: imageOffset,
         imageStyle: this.imageStyleForFile(pixelMap, uiContext),
       });
-      // 在图片后插入一行（图片独占一个段落）。
-      // 必须显式给样式并做字体缩放换算，否则这个换行 span 会带上"未缩放"的字号，
-      // 既让它自己的行高与正文不一致，也会被撤销/重做的"继承变更点样式"逻辑取走并传播出去
-      this.contentController.addTextSpan('\n', {
-        offset: caretOffset + 1,
-        style: this.effectiveTypingStyle(uiContext),
-      });
-      // 这两步都会被 onWillChange 自动捕获并合并成一条记录
+
+      if (needTrailing) {
+        // 后置换行开启的是图片【之后】那一段，用输入样式。
+        // 必须显式给样式并做字体缩放换算，否则这个换行 span 会带上"未缩放"的字号，
+        // 既让它自己的行高与正文不一致，也会被撤销/重做的"继承变更点样式"逻辑取走并传播出去
+        this.contentController.addTextSpan('\n', {
+          offset: imageOffset + 1,
+          style: this.effectiveTypingStyle(uiContext),
+        });
+      }
+
+      // 图片后面必然是一个换行（刚补的，或原本就有的），光标落到它之后 ——
+      // 也就是图片下方那一行的行首，用户可以接着输入
+      this.contentController.setCaretOffset(imageOffset + 2);
+      // 以上几步都会被 onWillChange 自动捕获，并由原子区间合并成一条记录
     } catch (error) {
       console.error(`Failed to add image to styled string. Cause: ${JSON.stringify(error)}`);
     } finally {

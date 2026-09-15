@@ -1,6 +1,5 @@
 import { Memo, MemoEditorArea, MemoEditorController } from 'memo_editor';
-import { MemoService, SystemCategory, UserCategory } from 'data_source';
-import { KVStore } from 'data_source';
+import { KVStore, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 
 @Builder
@@ -109,7 +108,6 @@ struct MemoEditView {
     this.currentMemo.title = this.memoTitle;
 
     if (this.isEditMemo) {
-      // todo
       this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
     } else {
       this.memoService.addMemo(this.currentMemo, this.kvStore, this.uiContext);
