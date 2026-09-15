@@ -1011,7 +1011,9 @@ struct Index {
         .padding({ left: 0, right: 0 })
         .hitTestBehavior(HitTestMode.None)
         .onReady(() => {
-          memo.rebuildContent(this.previewTextController, this.getUIContext());
+          // 预览是只读的（上面 hitTestBehavior 为 None），待办勾选框点不动，给个空实现
+          memo.rebuildContent(this.previewTextController, this.getUIContext(), () => {
+          });
         });
     }
     .padding(16)

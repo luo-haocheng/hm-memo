@@ -1,7 +1,7 @@
 import { COLOR_LIST } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
-import { BUILTIN_IMAGE_CIRCLE, Memo } from '../model/Memo';
+import { Memo } from '../model/Memo';
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -189,13 +189,13 @@ export struct MemoEditorArea {
           this.controller.insertImage(this.getUIContext());
         });
 
-      // 插入内置图片
+      // 插入待办勾选框（插到当前段落开头）
       Image($r('app.media.circle'))
         .width(20)
         .height(20)
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
-          this.controller.insertBuiltinImage(BUILTIN_IMAGE_CIRCLE, this.getUIContext());
+          this.controller.insertTodoMark();
         });
     }
     .padding(12)
@@ -240,8 +240,12 @@ export struct MemoEditorArea {
               this.controller.suspendHistory();
               // 预设文本输入样式（与工具栏状态保持一致）
               this.controller.applyTypingStyle();
-              // 重建备忘内容
-              this.editingMemo.rebuildContent(this.controller.contentController, this.getUIContext());
+              // 重建备忘内容。待办勾选框要能点击切换，而 gesture 只能在插入时挂上，
+              // 所以把回调一路传进去 —— 否则从存档恢复出来的勾选框是"死"的
+              this.editingMemo.rebuildContent(this.controller.contentController, this.getUIContext(),
+                () => {
+                  this.controller.onTodoMarkTap();
+                });
               // 内容就位后建立历史基线（第 0 条 = 初始状态，不可撤销回去）
               this.controller.resumeHistoryAndReset();
             })
@@ -261,6 +265,10 @@ export struct MemoEditorArea {
             //（详见 onDidChange 的注释；这里只用到 rangeAfter）
             .onDidChange((_rangeBefore: TextRange, rangeAfter: TextRange) => {
               this.controller.onDidChange(rangeAfter, this.getUIContext());
+            })
+            // 待办勾选框被点中后，等光标落定再判定点的是哪一张（见 onTodoMarkTap 的注释）
+            .onSelectionChange((range: RichEditorRange) => {
+              this.controller.onSelectionChange(range);
             });
         }
         .width('100%');

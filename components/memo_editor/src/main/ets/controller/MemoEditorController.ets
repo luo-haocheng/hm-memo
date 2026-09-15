@@ -1,5 +1,14 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
-import { builtinImageResource, builtinImageStyle, calcDesiredSize } from '../model/Memo';
+import {
+  builtinImageNameOf,
+  builtinImageResource,
+  builtinImageStyle,
+  calcDesiredSize,
+  doneTextColor,
+  TODO_MARK_DONE,
+  TODO_MARK_OPEN,
+  toggledTodoMark
+} from '../model/Memo';
 import { common } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -17,6 +26,11 @@ const FILE_IMAGE_VERTICAL_MARGIN = 12;
 const MERGE_WINDOW_MS = 500;
 // 历史上限：超出后从最早的记录开始丢弃
 const MAX_HISTORY_RECORDS = 100;
+
+// 点击待办勾选框后，等光标落定的超时兜底时长（毫秒）。
+// 实测落定事件在点击回调之后约 1ms 就到，200ms 是给慢设备留的余量；
+// 这个值只在"框架根本不会发落定事件"时才用得上，宁长勿短
+const TODO_TAP_SETTLE_MS = 200;
 
 /**
  * 插入类记录：框架给了"变更后"的新内容。
@@ -181,6 +195,26 @@ interface ParagraphFix {
   paragraphStyle?: RichEditorParagraphStyle;
 }
 
+/** 命中的待办勾选框：位置 + 当前名称（名称决定切换成哪一张图） */
+interface TodoMarkHit {
+  offset: number;
+  name: string;
+}
+
+/**
+ * 这批新内容是不是"恰好一个换行" —— 也就是用户按了回车。
+ *
+ * 换行在编辑器里**永远单独成 span**（见 SPAN_EDITOR_REVIEW §二），所以这里能精确认出来。
+ * 靠这个判定把它和"粘贴整段文本"区分开：粘贴是多 span，不会被当成回车。
+ */
+function isSingleNewline(spans: Array<RichEditorSpan>): boolean {
+  if (spans.length !== 1) {
+    return false;
+  }
+  const textSpan = spans[0] as RichEditorTextSpanResult;
+  return textSpan.textStyle !== undefined && textSpan.value === '\n';
+}
+
 /**
  * 新内容里是否含换行符或图片。
  *
@@ -238,6 +272,13 @@ export class MemoEditorController {
   private isRestoring: boolean = false;
   // 正在补「图片单独成段」的换行：补换行本身会同步触发一轮 willChange / didChange，用它防递归
   private isRepairing: boolean = false;
+  // 勾选框被点中、但光标还没落定：等落定信号再判（见 onTodoMarkTap）
+  private pendingTodoTap: boolean = false;
+  // 点击勾选框那一刻的光标位置，供超时兜底判断"光标到底动没动"
+  private pendingTapCaret: number = -1;
+  // 本次变更是不是"回车新建了一段"（值为换行的插入点）；-1 表示不是。
+  // 在 onWillChange 里判定、onDidChange 里消费，用完即清
+  private pendingEnterOffset: number = -1;
   // 原子区间嵌套深度：大于 0 时，期间捕获的多条记录会合并成一条
   private atomicDepth: number = 0;
   // 本原子区间第一条记录会落在的下标。原子合并只能发生在本次区间产生的记录之间 ——
@@ -314,6 +355,10 @@ export class MemoEditorController {
       afterRaw.push(span);
     }
     afterRaw.sort((a, b) => a.spanPosition.spanRange[0] - b.spanPosition.spanRange[0]);
+
+    // 这次是不是"回车新建了一段"？判定见 isSingleNewline 的注释。
+    // 放在这里是为了只判一次 —— 下面记录怎么建、是不是纯删除，都不影响这个判定
+    this.pendingEnterOffset = (rangeStart === rangeEnd && isSingleNewline(afterRaw)) ? rangeStart : -1;
 
     const record = new ChangeRecord();
     record.changeStart = rangeStart;
@@ -400,7 +445,10 @@ export class MemoEditorController {
   }
 
   /**
-   * onDidChange —— 变更【后】触发，用来维持「相册图片单独成段」。
+   * onDidChange —— 变更【后】触发，用来维护两类「内容各自成段」的原则：
+   *
+   *   - 相册照片必须**独占一段**：前后两侧都得是换行
+   *   - 待办勾选框必须待在**段落开头**：前一格得是换行（或文档开头）
    *
    * 【为什么放在变更后】修复依据的是变更【后】的真实内容，只有这里读得到
    *（onWillChange 里 getSpans() 拿到的还是旧内容）。而且这里能拿到精确的 rangeAfter，
@@ -412,13 +460,23 @@ export class MemoEditorController {
    * 它的语义是把没改动的旧内容和新内容合并成同一个 span、样式还报写入前的原始值
    *（见 UNDO_REDO_PLAN §二），还原不了。放行 + 事后修复是"看结果说话"，对入口不敏感。
    *
-   * ⚠️ 只管相册图片：内置圆环图是刻意行内插入的（见 insertBuiltinImage），不受这条原则约束。
+   * 【只管行内图片】两条原则都只针对图片单元；普通文字不受任何约束。
+   * 两类图片的约束不同（照片前后都要换行，勾选框只管前侧），所以判定分开写在循环里。
    */
   onDidChange(rangeAfter: TextRange, uiContext: UIContext) {
+    // 先把回车标记消费掉：下面几个分支都可能提前 return，留着会污染下一次变更
+    const enterOffset = this.pendingEnterOffset;
+    this.pendingEnterOffset = -1;
     // 重建内容 / 撤销重做期间不插手：那些变更不来自用户编辑。
     // isRepairing 是防递归 —— 下面补换行会同步触发一轮 willChange / didChange
     if (this.isRestoring || this.isRepairing) {
       return;
+    }
+    // 回车新建的一段，上一段是待办的话把它也变成待办。
+    // 放在下面的段落维护【之前】：它会插一张图，而那段维护是按"当时的坐标"扫描的，
+    // 先插再扫，坐标才对得上
+    if (enterOffset >= 0) {
+      this.continueTodoParagraph(enterOffset);
     }
     const rangeStart = rangeAfter.start ?? 0;
     const rangeEnd = rangeAfter.end ?? 0;
@@ -439,17 +497,26 @@ export class MemoEditorController {
     // 指向同一个插入位置，各插一个会凭空多出空段落
     const fixes: Map<number, ParagraphFix> = new Map<number, ParagraphFix>();
     for (const span of spans) {
-      if (!isAlbumPhoto(span)) {
+      const range = span.spanPosition.spanRange;
+      if (isAlbumPhoto(span)) {
+        // 前侧：左边是普通字符或另一张图 → 图片已经和它挤在同一段了
+        if (neighborAt(spans, range[0] - 1) === 'other') {
+          fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
+        }
+        // 后侧同理
+        if (neighborAt(spans, range[1]) === 'other') {
+          fixes.set(range[1], this.buildParagraphFix(range[1], range[1], spans, uiContext));
+        }
         continue;
       }
-      const range = span.spanPosition.spanRange;
-      // 前侧：左边是普通字符或另一张图 → 图片已经和它挤在同一段了
-      if (neighborAt(spans, range[0] - 1) === 'other') {
+      // 待办勾选框只能待在【段落开头】—— 图标前一格不是换行（也不是文档开头）就补一个。
+      // 这一条同时管住两种越界，它们是同一个条件：
+      //   在图标前打字   prev\nX[图标]  → prev\nX\n[图标]   打的字被挡回上一段
+      //   删掉图标前的换行 prev[图标]   → prev\n[图标]      两个待办不会被并成一行
+      const markName = builtinImageNameOf(span);
+      if (markName !== undefined && toggledTodoMark(markName) !== undefined
+        && neighborAt(spans, range[0] - 1) === 'other') {
         fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
-      }
-      // 后侧同理
-      if (neighborAt(spans, range[1]) === 'other') {
-        fixes.set(range[1], this.buildParagraphFix(range[1], range[1], spans, uiContext));
       }
     }
     if (fixes.size === 0) {
@@ -1074,22 +1141,274 @@ export class MemoEditorController {
   }
 
   /**
-   * 插入内置图片（行内小图标，不独占段落）
+   * position 所在段落的真正起点。
+   *
+   * 不能直接用 `getParagraphRange().start` 了事 —— 段落以行内图片开头时，
+   * `getParagraphs()` 报的段首会落在图片【之后】（实测：勾选框占 `[0,1)`、光标在 1 处时，
+   * 报的段首是 1 而不是 0，见 SPAN_EDITOR_REVIEW §五），
+   * 拿它去判"段首有没有勾选框"必然落空。所以还得往回看一格。
    */
-  insertBuiltinImage(name: string, uiContext: UIContext) {
-    const resource = builtinImageResource(name);
+  private paragraphStartAt(position: number): number {
+    const range = this.getParagraphRange(position, position);
+    const start = range.start ?? position;
+    if (start > 0 && this.todoMarkAt(start - 1) !== undefined) {
+      return start - 1;
+    }
+    return start;
+  }
+
+  /**
+   * 回车新建的那一段，如果上一段是待办，就把它也变成待办 —— 待办列表连着写的基本手感。
+   *
+   * @param enterOffset 换行的插入点（= 上一段的结尾），新段落从它后一格开始
+   *
+   * 触发条件由 onWillChange 判定（纯插入 + 恰好一个换行），粘贴整段不会走到这里。
+   */
+  private continueTodoParagraph(enterOffset: number) {
+    // 上一段以勾选框开头吗？注意用 paragraphStartAt 而不是直接取 getParagraphRange，
+    // 理由见它的注释
+    if (this.todoMarkAt(this.paragraphStartAt(enterOffset - 1)) === undefined) {
+      return;
+    }
+    const resource = builtinImageResource(TODO_MARK_OPEN);
     if (!resource) {
-      console.error(`Unknown builtin image: ${name}`);
+      console.error(`Unknown builtin image: ${TODO_MARK_OPEN}`);
       return;
     }
     try {
-      const caretOffset = this.contentController.getCaretOffset();
       this.contentController.addImageSpan(resource, {
-        offset: caretOffset,
+        offset: enterOffset + 1,
         imageStyle: builtinImageStyle(),
+        gesture: {
+          onClick: () => {
+            this.onTodoMarkTap();
+          },
+        },
+      });
+      // 光标落到新勾选框之后，用户可以直接写这一条的内容
+      this.contentController.setCaretOffset(enterOffset + 2);
+    } catch (error) {
+      console.error(`Failed to continue todo paragraph. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+
+  /**
+   * 插入待办勾选框（行内小图标，不独占段落）。
+   *
+   * 插到光标所在**段落开头** —— 与「待办 = 以勾选框开头的段落」这个定义自洽，
+   * 也与系统备忘录一致；光标停在段落中间时不会插出一个"半截待办"。
+   */
+  insertTodoMark() {
+    const caret = this.contentController.getCaretOffset();
+    if (caret < 0) {
+      return;
+    }
+    const paragraphStart = this.paragraphStartAt(caret);
+    // 段首已经有勾选框就不重复插，免得变成「○○ 买牛奶」
+    if (this.todoMarkAt(paragraphStart) !== undefined) {
+      return;
+    }
+    const resource = builtinImageResource(TODO_MARK_OPEN);
+    if (!resource) {
+      console.error(`Unknown builtin image: ${TODO_MARK_OPEN}`);
+      return;
+    }
+    try {
+      this.contentController.addImageSpan(resource, {
+        offset: paragraphStart,
+        imageStyle: builtinImageStyle(),
+        gesture: {
+          onClick: () => {
+            this.onTodoMarkTap();
+          },
+        },
       });
     } catch (error) {
-      console.error(`Failed to insert builtin image ${name}. Cause: ${JSON.stringify(error)}`);
+      console.error(`Failed to insert todo mark. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+
+  // ==================== 待办勾选框 ====================
+
+  /**
+   * 勾选框被点中（挂在图片 span 的 gesture 上）。
+   *
+   * 【触发与定位是分开的两件事】
+   *   - 触发：只有真正点在图标上才会进这个回调（点它左边/右边的文字不会），
+   *     所以左半边右半边都算数，不需要额外判方向
+   *   - 定位：框架会把光标移到被点那张图的旁边，**落在前还是后取决于点的是左半还是右半**
+   *     （实测：点左半落 0、点右半落 1）。两种都要认 ——
+   *     勾选框是段落级标记、不可能两张紧挨着，所以"紧邻光标的勾选框"唯一
+   *
+   * 【为什么必须等落定，不能就地判】回调里读到的光标还是点击【前】的
+   *（实测：点击前在 9，回调里读到 9，落定后才是 0）。而点击前光标多半正停在
+   * **上一个被点的图标**旁边 —— 直接按它判就会切错目标：
+   *   两个待办 A、B：点完 A 后光标停在 A 旁；再点 B 时，B 的回调触发时光标还没更新，
+   *   仍然紧邻 A，于是又切了一次 A。
+   * 所以这里只挂起，等落定信号统一结算。
+   */
+  onTodoMarkTap() {
+    this.pendingTodoTap = true;
+    this.pendingTapCaret = this.contentController.getCaretOffset();
+    // 超时兜底：光标本来就落在"落定位置"时，框架不会触发 onSelectionChange（实测有这种情况），
+    // 这时等不到事件，按点击时的光标结算 —— 光标一直没动，说明它正是落定位置。
+    // 若它已经动过，说明落定事件在路上（或已处理），交给 onSelectionChange，这里什么都不做
+    setTimeout(() => {
+      if (this.pendingTodoTap && this.contentController.getCaretOffset() === this.pendingTapCaret) {
+        this.settleTodoTap(this.pendingTapCaret);
+      }
+    }, TODO_TAP_SETTLE_MS);
+  }
+
+  /** 选区 / 光标落定（组件上的 onSelectionChange） */
+  onSelectionChange(range: RichEditorRange) {
+    this.settleTodoTap(range.start ?? -1);
+  }
+
+  /** 结算一次点击。pendingTodoTap 保证同一次点击只结算一次 —— 先到的那个说了算 */
+  private settleTodoTap(caret: number) {
+    if (!this.pendingTodoTap) {
+      return;
+    }
+    this.pendingTodoTap = false;
+    const hit = this.todoMarkNearCaret(caret);
+    if (hit !== undefined) {
+      this.toggleTodoMark(hit);
+    }
+  }
+
+  /** position 处是不是待办勾选框；是则返回它的名称 */
+  private todoMarkAt(position: number): string | undefined {
+    if (position < 0) {
+      return undefined;
+    }
+    const spans = this.contentController.getSpans({ start: position, end: position + 1 });
+    for (const span of spans) {
+      const name = builtinImageNameOf(span);
+      if (name !== undefined && toggledTodoMark(name) !== undefined
+        && span.spanPosition.spanRange[0] === position) {
+        return name;
+      }
+    }
+    return undefined;
+  }
+
+  /** 找紧邻光标（前一格或后一格）的待办勾选框；两侧都认，理由见 onTodoMarkTap */
+  private todoMarkNearCaret(caret: number): TodoMarkHit | undefined {
+    if (caret < 0) {
+      return undefined;
+    }
+    const spans = this.contentController.getSpans({ start: Math.max(0, caret - 1), end: caret + 1 });
+    for (const span of spans) {
+      const name = builtinImageNameOf(span);
+      if (name === undefined || toggledTodoMark(name) === undefined) {
+        continue;
+      }
+      const range = span.spanPosition.spanRange;
+      if (range[1] === caret || range[0] === caret) {
+        return { offset: range[0], name: name };
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * 切换勾选状态：换图（圆环 ↔ 勾）+ 该行文字变灰 / 复原。
+   *
+   * RichEditor 没有"更新图片 span"的 API，所以换图 = 删掉旧图 + 在原位置插新图。
+   * 勾选框占 1 个坐标单位，删一插一，后面的内容不会移位。
+   */
+  private toggleTodoMark(hit: TodoMarkHit) {
+    const nextName = toggledTodoMark(hit.name);
+    if (nextName === undefined) {
+      return;
+    }
+    const resource = builtinImageResource(nextName);
+    if (!resource) {
+      console.error(`Unknown builtin image: ${nextName}`);
+      return;
+    }
+    try {
+      this.contentController.deleteSpans({ start: hit.offset, end: hit.offset + 1 });
+      this.contentController.addImageSpan(resource, {
+        offset: hit.offset,
+        imageStyle: builtinImageStyle(),
+        gesture: {
+          onClick: () => {
+            this.onTodoMarkTap();
+          },
+        },
+      });
+      // 变灰作用于勾选框之后、本行末尾之前的全部文字
+      const line = this.todoTextRange(hit.offset);
+      const textStart = line.start ?? hit.offset + 1;
+      const textEnd = line.end ?? textStart;
+      if (textEnd > textStart) {
+        this.applyDoneStyle(textStart, textEnd, nextName === TODO_MARK_DONE);
+      }
+    } catch (error) {
+      console.error(`Failed to toggle todo mark. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+
+  /**
+   * 勾选框所在那一行剩余文字的区间：[勾选框后一格, 第一个换行符)。
+   *
+   * 这里**刻意不用 getParagraphRange 取末尾**，两个原因：
+   *   ① 实测段落以勾选框开头时，getParagraphs() 报的段首会落在勾选框【之后】，
+   *      段落边界并不能直接当"这一行的范围"用（insertTodoMark 里也踩了同一个坑）
+   *   ② 待办为空行时（一行只有一个勾选框），按段尾取会把下一行的文字一并算进来
+   */
+  private todoTextRange(markOffset: number): RichEditorRange {
+    const start = markOffset + 1;
+    let end = start;
+    for (const span of this.contentController.getSpans()) {
+      const range = span.spanPosition.spanRange;
+      if (range[1] <= start) {
+        continue;
+      }
+      const textSpan = span as RichEditorTextSpanResult;
+      if (textSpan.textStyle === undefined) {
+        end = Math.max(end, range[1]); // 图片：整格跨过去
+        continue;
+      }
+      // 找到这一行末尾的换行就收工
+      const breakAt = textSpan.value.indexOf('\n', Math.max(start, range[0]) - range[0]);
+      if (breakAt >= 0) {
+        return { start: start, end: range[0] + breakAt };
+      }
+      end = Math.max(end, range[1]);
+    }
+    return { start: start, end: end }; // 没有换行 = 这一行一直到文档末尾
+  }
+
+  /**
+   * 已完成 / 未完成的文字外观：[start, end) 内的文字变灰或复原。
+   *
+   * 颜色怎么算是 `doneTextColor` 的事（具体色值只改 alpha、主题色换成已知的灰，
+   * 两种都能精确还原，不会把用户自己设的颜色冲掉）—— 这里只负责**逐 span 应用**。
+   *
+   * 逐 span 而不是整段设一个色：一行里可能混着不同颜色的 span，
+   * 每个都得按它自己的原色去变灰 / 还原。
+   */
+  private applyDoneStyle(start: number, end: number, done: boolean) {
+    const spans = this.contentController.getSpans({ start: start, end: end });
+    for (const span of spans) {
+      const range = span.spanPosition.spanRange;
+      const textSpan = span as RichEditorTextSpanResult;
+      if (textSpan.textStyle === undefined) {
+        continue;
+      }
+      const from = Math.max(start, range[0]);
+      const to = Math.min(end, range[1]);
+      if (to <= from) {
+        continue;
+      }
+      this.contentController.updateSpanStyle({
+        textStyle: { fontColor: doneTextColor(textSpan.textStyle.fontColor, done) },
+        start: from,
+        end: to,
+      });
     }
   }
 
