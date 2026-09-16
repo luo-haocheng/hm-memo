@@ -1,4 +1,4 @@
-import { clearAttachments, Memo } from 'memo_editor';
+import { FileChip, FileChipInfo, Memo } from 'memo_editor';
 import {
   CategoryService,
   KVStore,
@@ -209,12 +209,12 @@ struct Index {
     await this.memoService.loadAllMemos(this.kvStore);
     // 加载分类数据
     await this.categoryService.loadCategoryList(this.kvStore, this.currentMemoList);
-    // 数据已完整加载：延后到首帧之后再回收无引用的孤儿图片，避免拖慢启动
+    // 数据已完整加载：延后到首帧之后再回收无引用的孤儿图片与附件，避免拖慢启动
     setTimeout(() => {
       this.memoService.reclaimOrphanImages(this.uiContext);
-      // 附件副本不持久化（保存重开后 chip 必然消失），所以冷启动时 memo_files 里
-      // 百分之百是上一轮的孤儿，整个目录可以直接清空。详见 Memo.clearAttachments 的注释
-      clearAttachments(this.uiContext);
+      // 附件副本同样走白名单式回收。⚠️ 不能再"启动时整个清空" ——
+      // 附件已经持久化了，那样会把正在用的副本一起删掉
+      this.memoService.reclaimOrphanAttachments(this.uiContext);
     }, 0);
   }
 
@@ -997,6 +997,12 @@ struct Index {
     }
   }
 
+  /** 预览里的附件 chip：只读，点击无响应（外层 hitTestBehavior 已是 None） */
+  @Builder
+  previewFileChip(info: FileChipInfo) {
+    FileChip({ info: info });
+  }
+
   @Builder
   memoPreview(memo: Memo) {
     Column() {
@@ -1016,6 +1022,11 @@ struct Index {
         .onReady(() => {
           // 预览是只读的（上面 hitTestBehavior 为 None），待办勾选框点不动，给个空实现
           memo.rebuildContent(this.previewTextController, this.getUIContext(), () => {
+          }, (info: FileChipInfo) => {
+            // 附件 chip 的外观与编辑区共用 FileChip，只是不接点击
+            return (): void => {
+              this.previewFileChip(info);
+            };
           });
         });
     }

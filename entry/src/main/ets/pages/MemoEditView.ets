@@ -103,7 +103,10 @@ struct MemoEditView {
     }
 
     const spanResult = this.editorController.contentController.getSpans();
-    await this.currentMemo.updateContent(spanResult, this.uiContext);
+    // 附件按文档顺序的相对路径。chip 的 span 里没有文件名，只能由控制器的侧表提供；
+    // 这一步同时会把侧表的 offset 与编辑器真实状态对齐（见 attachmentPathsInOrder）
+    await this.currentMemo.updateContent(spanResult, this.uiContext,
+      this.editorController.attachmentPathsInOrder());
     this.currentMemo.description = contentStr;
     this.currentMemo.title = this.memoTitle;
 

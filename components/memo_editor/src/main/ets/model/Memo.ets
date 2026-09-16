@@ -1,6 +1,8 @@
 import image from '@ohos.multimedia.image';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
+import { uniformTypeDescriptor } from '@kit.ArkData';
+import { FileChipInfo } from './FileChipInfo';
 // 字体权重的反向映射搬到 SpanMapping，与撤销/重做链路共用同一份，避免两份拷贝漂移
 import { fontWeightResult2Value } from './SpanMapping';
 // 调色板：用来判断一个色值是"用户选的自定义色"还是"主题色"（见 isPaletteColor）
@@ -14,11 +16,91 @@ export const IMAGE_DIR_NAME = 'memo_images';
 /**
  * 文件附件副本存放的子目录名（相对于 filesDir）。
  *
- * ⚠️ 与 memo_images 的生命周期**完全不同**：备忘录从不引用这里的文件
- *（附件不持久化，见 FILE_ATTACHMENT_REVIEW.md），所以启动时整个目录可以直接清空 ——
- * 届时里面必然全是上一轮的孤儿。清理入口是 clearAttachments()
+ * 结构是 `memo_files/<uuid>/<原文件名>` —— 套一层 uuid 目录是为了在目标应用里保住原文件名
+ *（对方标题栏显示的是 URI 末段），同时避免两个同名附件互相覆盖。
+ *
+ * 生命周期与 IMAGE_DIR_NAME 一致：删除走**白名单式**回收，
+ * 由 MemoService.reclaimOrphanAttachments 删除不再被任何备忘引用的目录。
+ *
+ * ⚠️ **绝不能做"启动时整个清空"那种事** —— 附件已经持久化了，那会把正在用的副本一起删掉。
+ *（上一版就是这么干的，见 FILE_ATTACHMENT_REVIEW.md 的历史记录。）
  */
 export const ATTACHMENT_DIR_NAME = 'memo_files';
+
+/**
+ * 常见后缀 → MIME 的本地表。
+ *
+ * 有了它就不必为常见类型走一次系统查询，也避开 UTD 对未知后缀回落成"灵活类型"
+ *（general.file，其 mimeTypes 可能是空、也可能是个通配值）的麻烦。
+ * 表里没有的后缀再问系统，最后兜到 MIME_FALLBACK。
+ */
+const MIME_BY_SUFFIX: Map<string, string> = new Map<string, string>([
+  ['txt', 'text/plain'], ['md', 'text/markdown'], ['csv', 'text/csv'],
+  ['json', 'application/json'], ['xml', 'text/xml'], ['html', 'text/html'],
+  ['pdf', 'application/pdf'],
+  ['doc', 'application/msword'],
+  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['xls', 'application/vnd.ms-excel'],
+  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['ppt', 'application/vnd.ms-powerpoint'],
+  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  ['zip', 'application/zip'], ['rar', 'application/vnd.rar'], ['7z', 'application/x-7z-compressed'],
+  ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'], ['webp', 'image/webp'], ['bmp', 'image/bmp'],
+  ['mp3', 'audio/mpeg'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
+  ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo'],
+]);
+
+/** 认不出后缀时用的 MIME */
+const MIME_FALLBACK = 'application/octet-stream';
+
+/**
+ * 文件名 → MIME。先查本地表，再问系统，最后兜底。
+ *
+ * 系统查询那一步的口径未能从声明确认（`filenameExtension` 要不要带前导点、
+ * 未知后缀的返回是否可用），但本地表已覆盖常见类型，认不出也只是回落到
+ * MIME_FALLBACK —— 这个不确定性不影响正确性，只影响冷门后缀的识别率。
+ *
+ * 放在模型层是因为**插入与重建两条路径都要用**：插入时算出 MIME 交给 chip 打开，
+ * 重建时由存下来的相对路径重新推导（所以 MIME 不需要单独持久化）。
+ */
+export function mimeOfFileName(name: string): string {
+  const dot = name.lastIndexOf('.');
+  if (dot < 0 || dot === name.length - 1) {
+    return MIME_FALLBACK;
+  }
+  const suffix = name.substring(dot + 1).toLowerCase();
+  const known = MIME_BY_SUFFIX.get(suffix);
+  if (known !== undefined) {
+    return known;
+  }
+  try {
+    const typeId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix);
+    const mime = uniformTypeDescriptor.getTypeDescriptor(typeId).mimeTypes?.[0];
+    if (mime !== undefined && mime !== '' && mime !== '*/*') {
+      return mime;
+    }
+  } catch (error) {
+    console.error(`[file] 查询 MIME 失败: ${suffix}. Cause: ${JSON.stringify(error)}`);
+  }
+  return MIME_FALLBACK;
+}
+
+/** 附件相对路径 → 显示名（末段）。`<uuid>/<原文件名>` → `<原文件名>` */
+export function attachmentNameOf(relativePath: string): string {
+  const slash = relativePath.lastIndexOf('/');
+  return slash >= 0 ? relativePath.substring(slash + 1) : relativePath;
+}
+
+/** 附件相对路径 → 绝对路径（沙箱内）。存档里只存相对路径，与图片同一口径 */
+export function resolveAttachmentPath(uiContext: UIContext, relativePath: string): string {
+  const context = uiContext.getHostContext();
+  if (context === undefined) {
+    console.error(`[file] 取不到 host context，无法解析附件路径: ${relativePath}`);
+    return '';
+  }
+  return `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${relativePath}`;
+}
 
 // 图片最长边上限（px）。解码时按此降采样，同时降低编码耗时、文件体积与内存占用。
 // 编辑区显示宽度约 1134px（手机），2000px 足够清晰。
@@ -218,6 +300,38 @@ export function builtinImageNameOf(span: RichEditorSpan): string | undefined {
 }
 
 /**
+ * 这个 span 是不是**文件附件 chip**（builder span）。
+ *
+ * 【为什么需要】真机实测（见 FILE_ATTACHMENT_REVIEW.md §一）：框架**会**把 builder span
+ * 经由 `getSpans()` 返回，但把它伪装成 image span 的形状 —— `imageStyle` 有值、占 1 个坐标单位，
+ * 而 `valueResourceStr` 只是个**占位空格**，既不是 `resource:///<id>`，也没有 pixelMap。
+ *
+ * 所以判据是「排他」的：真实图片必然要么有 pixelMap（相册图）、要么能解析出资源 id（内置图），
+ * 两者都不具备的 image 形状 span 就是 builder span。
+ *
+ * ⚠️ 这与 SDK 声明矛盾 —— `getSpans()` 的返回类型是
+ * `Array<RichEditorImageSpanResult | RichEditorTextSpanResult>`，其中并不含 builder。
+ * 但运行时确实把它塞进了前者的形状里；真机做了对照测试（附件 vs 待办勾选框）才确认下来。
+ */
+export function isBuilderSpan(span: RichEditorSpan): boolean {
+  const imageSpan = span as RichEditorImageSpanResult;
+  if (imageSpan.imageStyle === undefined) {
+    return false; // 文本 span
+  }
+  if (imageSpan.valuePixelMap !== undefined) {
+    return false; // 相册图
+  }
+  const resourceStr = imageSpan.valueResourceStr;
+  if (resourceStr === undefined) {
+    return true; // 无图源的 image 形状 —— 不是真图片
+  }
+  if (typeof resourceStr !== 'string') {
+    return false; // Resource 对象 = 内置图
+  }
+  return parseResourceIdFromUri(resourceStr) === undefined;
+}
+
+/**
  * 按最长边上限计算解码目标尺寸。
  * 未超过上限时返回 undefined，表示按原始尺寸解码
  */
@@ -235,8 +349,11 @@ export function calcDesiredSize(width: number, height: number): image.Size | und
  *
  * 必须自己递归：`fileIo.rmdirSync` 遇到非空目录会抛 `13900032 - Directory not empty`，
  * 它**不是**递归删除。
+ *
+ * 供 `MemoService.reclaimOrphanAttachments` 回收附件目录 —— 附件副本是
+ * `memo_files/<uuid>/<文件名>` 的两级结构，删不掉非空目录就回收不了。
  */
-function removeDirRecursively(path: string): void {
+export function removeDirRecursively(path: string): void {
   let names: Array<string>;
   try {
     names = fileIo.listFileSync(path);
@@ -260,25 +377,6 @@ function removeDirRecursively(path: string): void {
   } catch (error) {
     console.error(`[file] 删除附件目录失败: ${path}. Cause: ${JSON.stringify(error)}`);
   }
-}
-
-/**
- * 清空附件副本目录，在应用启动时调用。
- *
- * 为什么可以直接清空：附件**不持久化**（`Memo.updateContent` 看不见 builder span，
- * 保存重开后 chip 必然消失），所以每次冷启动时 `memo_files` 里百分之百是上一轮的孤儿，
- * 不存在"还在被某个备忘引用"的文件。详见 FILE_ATTACHMENT_REVIEW.md。
- *
- * ⚠️ 将来若给附件做了持久化，**这个函数必须改成引用计数式的回收**
- *（对照 MemoService.reclaimOrphanImages 的白名单做法），否则会把正在用的副本删掉。
- */
-export function clearAttachments(uiContext: UIContext): void {
-  const context = uiContext.getHostContext();
-  if (context === undefined) {
-    console.error('[file] 取不到 host context，跳过附件副本清理');
-    return;
-  }
-  removeDirRecursively(`${context.filesDir}/${ATTACHMENT_DIR_NAME}`);
 }
 
 export interface MemoBlock {
@@ -317,26 +415,50 @@ export class Memo {
     this.updateTime = this.createTime;
   }
 
-  async updateContent(spanResult: Array<RichEditorSpan>, uiContext: UIContext) {
+  /**
+   * 把编辑器内容采集为可持久化的块序列。
+   *
+   * @param attachmentPaths 按文档顺序排列的附件相对路径。chip 的 span 里**没有**文件名
+   *   （`valueResourceStr` 只是个占位空格），所以"这格是哪个文件"只能由控制器从外部提供。
+   *   顺序必须与 `spanResult` 里 builder span 的出现顺序一致 ——
+   *   由 `MemoEditorController.attachmentPathsInOrder()` 负责保证
+   */
+  async updateContent(spanResult: Array<RichEditorSpan>, uiContext: UIContext,
+    attachmentPaths: Array<string>) {
     const memoBlockArr: Array<MemoBlock> = [];
+    // 下一个待配对的附件下标。这里只按顺序消费，增删由控制器的侧表跟踪
+    let attachmentIndex = 0;
     for (const span of spanResult) {
+      // 附件 chip：**必须先于图片分支判断** —— 它在形状上就是个 image span，
+      // 落到 mapImageSpan2Block 里会因资源串解析不出 id 而被丢弃，
+      // 并打出一条"Unsupported resource image"的误导性错误日志
+      if (isBuilderSpan(span)) {
+        const path = attachmentPaths[attachmentIndex];
+        attachmentIndex++;
+        if (path === undefined) {
+          console.error(`[file] 第 ${attachmentIndex} 个附件在侧表里找不到对应项，已跳过`);
+          continue;
+        }
+        memoBlockArr.push({
+          type: 'builder',
+          value: path,
+          offset: span.spanPosition.spanRange[0],
+        });
+        continue;
+      }
       // 图片Span信息
       const imageSpan = span as RichEditorImageSpanResult;
       if (imageSpan.imageStyle !== undefined) {
-        const imageSpan = span as RichEditorImageSpanResult;
-        if (imageSpan.imageStyle !== undefined) {
-          const imageBlock = await this.mapImageSpan2Block(imageSpan, uiContext);
-          if (imageBlock) {
-            memoBlockArr.push(imageBlock);
-          }
+        const imageBlock = await this.mapImageSpan2Block(imageSpan, uiContext);
+        if (imageBlock) {
+          memoBlockArr.push(imageBlock);
         }
         continue;
       }
       // 文本Span信息
       const textSpan = span as RichEditorTextSpanResult;
       if (textSpan.textStyle !== undefined) {
-        const textBlock = this.mapTextSpan2Block(textSpan);
-        memoBlockArr.push(textBlock);
+        memoBlockArr.push(this.mapTextSpan2Block(textSpan));
         continue;
       }
     }
@@ -349,20 +471,30 @@ export class Memo {
    * @param onTodoMarkTap 待办勾选框被点中时的回调。
    *   gesture 只能在 addImageSpan 时挂上，重建出来的勾选框否则是"死"的 ——
    *   所以这个回调得从组件一路传进来（Memo 是模型层，拿不到控制器）
+   * @param buildChip 附件 chip 的 CustomBuilder 工厂，同样是组件才能提供的东西：
+   *   `addBuilderSpan` 只接受零参的 `CustomBuilder`，而 builder 必须在组件作用域里构造
    */
-  rebuildContent(controller: RichEditorController, uiContext: UIContext, onTodoMarkTap: () => void) {
+  rebuildContent(controller: RichEditorController, uiContext: UIContext, onTodoMarkTap: () => void,
+    buildChip: (info: FileChipInfo) => CustomBuilder) {
+    // 逐块累积的编辑器坐标。文本 / 图片块不带 offset 是追加语义，只有附件块必须显式给
+    //（`addBuilderSpan` 的必填项）。但只有全程维护，口径才和编辑器一致。
+    //
+    // ⚠️ cursor 只在**真正插入成功后**推进 —— 它要如实反映编辑器里的坐标，
+    // 后面某个附件块的 offset 直接依赖它，多算一格就会插错位置
+    let cursor = 0;
     for (const block of this.memoBlockArr) {
       // 单块重建失败不影响其余内容：跳过该块，继续重建后续内容
       try {
         if (block.type === 'text') {
-          const options = this.mapBlock2TextSpan(block);
-          controller.addTextSpan(block.value, options);
+          controller.addTextSpan(block.value, this.mapBlock2TextSpan(block));
+          cursor += block.value.length;
         } else if (block.type === 'image') {
           const options = this.mapBlock2ImageSpan(block, onTodoMarkTap);
           if (block.imgSource === 'resource') {
             const resource = builtinImageResource(block.value);
             if (resource) {
               controller.addImageSpan(resource, options);
+              cursor += 1;
             } else {
               console.error(`Unknown builtin image: ${block.value}`);
             }
@@ -370,6 +502,11 @@ export class Memo {
             const pixelMap = this.loadImage(this.resolveImagePath(uiContext, block.value));
             controller.addImageSpan(pixelMap, options);
             pixelMap.release();
+            cursor += 1;
+          }
+        } else if (block.type === 'builder') {
+          if (this.addAttachmentSpan(controller, block, cursor, buildChip, uiContext)) {
+            cursor += 1;
           }
         }
       } catch (error) {
@@ -378,6 +515,39 @@ export class Memo {
     }
     // 内容全部就位后再补"已完成"的灰 —— 那时各块的坐标才稳定
     this.applyTodoDoneStyles(controller);
+  }
+
+  /**
+   * 重建一个附件 chip，返回是否真的插进去了。
+   *
+   * 文件缺失时**整块跳过**（并记日志）—— 副本可能已被孤儿回收删掉，
+   * 这时宁可少一个 chip，也不能插一个点了打不开的死 chip。
+   * 调用方据此决定要不要推进坐标。
+   */
+  private addAttachmentSpan(controller: RichEditorController, block: MemoBlock, offset: number,
+    buildChip: (info: FileChipInfo) => CustomBuilder, uiContext: UIContext): boolean {
+    const absolutePath = resolveAttachmentPath(uiContext, block.value);
+    if (absolutePath === '') {
+      return false;
+    }
+    try {
+      if (!fileIo.accessSync(absolutePath)) {
+        console.error(`[file] 附件副本不存在，跳过重建: ${block.value}`);
+        return false;
+      }
+    } catch (error) {
+      console.error(`[file] 检查附件副本失败，跳过重建: ${block.value}. Cause: ${JSON.stringify(error)}`);
+      return false;
+    }
+    const name = attachmentNameOf(block.value);
+    const info: FileChipInfo = {
+      uri: fileUri.getUriFromPath(absolutePath),
+      name: name,
+      mimeType: mimeOfFileName(name),
+      relativePath: block.value,
+    };
+    controller.addBuilderSpan(buildChip(info), { offset: offset });
+    return true;
   }
 
   /**
@@ -427,6 +597,20 @@ export class Memo {
   collectImageFileNames(into: Set<string>) {
     for (const block of this.memoBlockArr) {
       if (block.type === 'image' && block.imgSource === 'file' && block.value) {
+        into.add(block.value);
+      }
+    }
+  }
+
+  /**
+   * 收集本备忘引用的附件相对路径（供孤儿回收使用）
+   *
+   * 注意收的是 `memo_files` 下**一级目录 + 文件名**的相对路径，不是裸文件名 ——
+   * 附件副本是两级结构（见 ATTACHMENT_DIR_NAME）
+   */
+  collectAttachmentPaths(into: Set<string>) {
+    for (const block of this.memoBlockArr) {
+      if (block.type === 'builder' && block.value) {
         into.add(block.value);
       }
     }

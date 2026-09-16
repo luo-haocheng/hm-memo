@@ -1,4 +1,4 @@
-import { IMAGE_DIR_NAME, Memo } from 'memo_editor';
+import { ATTACHMENT_DIR_NAME, IMAGE_DIR_NAME, Memo, removeDirRecursively } from 'memo_editor';
 import { KVStore } from 'data_source';
 import { CategoryService } from './CategoryService';
 import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
@@ -161,6 +161,93 @@ export class MemoService {
       }
     }
     console.info(`[reclaim] orphan images ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
+      + `${removedCount}, kept: ${referenced.size}.`);
+  }
+
+  /**
+   * 回收孤儿附件：删除 memo_files 下不再被任何备忘（含回收站）引用的副本目录。
+   *
+   * 结构与图片不同 —— 附件是**两级**的：`memo_files/<uuid>/<原文件名>`。
+   * 所以白名单里存的是 `<uuid>/<文件名>` 相对路径，遍历也要多走一层：
+   * 逐个 <uuid> 目录，把其中每个文件拼成相对路径去比对，**整个目录都不被引用才删**。
+   *
+   * 安全约束与 reclaimOrphanImages 一致：isFullyLoaded 前置、先收集再删除、
+   * 认不出的条目一律不动、内部不抛异常（可由调用方 fire-and-forget）。
+   *
+   * ⚠️ 不做目录内的逐文件删除：只要该目录里还有一个文件被引用就整个保留。
+   * 这会让个别孤儿多留一轮，但不会误删 —— 取舍偏向安全。
+   */
+  public reclaimOrphanAttachments(uiContext: UIContext) {
+    if (!this.isFullyLoaded) {
+      console.info('Skip reclaiming orphan attachments: memos are not fully loaded.');
+      return;
+    }
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('Failed to reclaim orphan attachments: host context is unavailable.');
+      return;
+    }
+    const dir = `${context.filesDir}/${ATTACHMENT_DIR_NAME}`;
+    try {
+      if (!fileIo.accessSync(dir)) {
+        return; // 从未插入过附件，属于正常情况
+      }
+    } catch (error) {
+      console.info(`Failed to access attachment dir: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 1. 白名单：收集所有被引用的附件相对路径（有效备忘 + 回收站）
+    const referenced = new Set<string>();
+    for (const memo of this.memoList) {
+      memo.collectAttachmentPaths(referenced);
+    }
+    for (const memo of this.dumpsters) {
+      memo.collectAttachmentPaths(referenced);
+    }
+
+    // 2. 扫第一层：拿到全部 <uuid> 目录
+    let entries: string[] = [];
+    try {
+      entries = fileIo.listFileSync(dir);
+    } catch (error) {
+      console.error(`Failed to list attachment dir: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 3. 逐个目录判断
+    let removedCount = 0;
+    for (const rawEntry of entries) {
+      const uuid = rawEntry.substring(rawEntry.lastIndexOf('/') + 1);
+      const subDir = `${dir}/${uuid}`;
+      let names: string[] = [];
+      try {
+        names = fileIo.listFileSync(subDir);
+      } catch (error) {
+        // 不是目录、或读取失败：不动它
+        console.error(`Failed to list attachment sub dir: ${subDir}. Cause: ${JSON.stringify(error)}`);
+        continue;
+      }
+      let referencedInside = false;
+      for (const rawName of names) {
+        const name = rawName.substring(rawName.lastIndexOf('/') + 1);
+        if (referenced.has(`${uuid}/${name}`)) {
+          referencedInside = true;
+          break;
+        }
+      }
+      if (referencedInside) {
+        continue;
+      }
+      if (RECLAIM_DRY_RUN) {
+        console.info(`[reclaim] would remove orphan attachment dir: ${uuid} (${names.length} file(s))`);
+      } else {
+        removeDirRecursively(subDir);
+        console.info(`[reclaim] removed orphan attachment dir: ${uuid} (${names.length} file(s))`);
+      }
+      removedCount++;
+    }
+    console.info(`[reclaim] orphan attachment dirs ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
       + `${removedCount}, kept: ${referenced.size}.`);
   }
 

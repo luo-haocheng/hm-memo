@@ -3,6 +3,7 @@ import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { FileChipInfo } from '../model/FileChipInfo';
 import { Memo } from '../model/Memo';
+import { FileChip } from './FileChip';
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -221,45 +222,19 @@ export struct MemoEditorArea {
   }
 
   /**
-   * 文件附件 chip。**行内**原子单元，随文字流动，不单独成段。
+   * 附件 chip 的构建入口。
    *
-   * 参数用**单个对象**而非多个散参：这是 `@Builder` 支持"按引用传递"的前提形态
-   *（调用处写对象字面量才算按引用）。这里调用时传的是变量，**实际按值传递** ——
-   * 本场景数据是静态的（插入时定好就不再变），按值就够；
-   * 保持单对象形态是为了将来给 chip 加"选中 / 删除"等交互态时不必改调用约定。
-   *
-   * 点击必须挂在 chip 自己的内容上：`RichEditorBuilderSpanOptions` 里**没有** gesture
-   * 字段（只有 offset 与 accessibilitySpanOptions），不像 `addImageSpan` 那样能在插入时挂手势。
+   * 外观定义在 `FileChip` 组件里（首页长按预览复用同一份，避免两处外观漂移），
+   * 这里只负责把它接上「点击用系统应用打开」。
    */
   @Builder
   fileChip(info: FileChipInfo) {
-    Row({ space: 4 }) {
-      Image($r('app.media.ic_attach'))
-        .width(14)
-        .height(14)
-        .fillColor($r('sys.color.font_primary'))
-        .draggable(false);
-
-      Text(info.name)
-        .fontSize(this.controller.fontSize)
-        .fontColor($r('sys.color.font_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis });
-    }
-    // 必须有上界，否则一个长文件名会把整行撑开；给 Row 定死 maxWidth 才能让
-    // 子 Text 的省略号真正生效。注意**不能**写 width('100%') —— 那会让 chip 独占一行
-    .constraintSize({ maxWidth: 220 })
-    .padding({
-      left: 6,
-      right: 6,
-      top: 2,
-      bottom: 2
-    })
-    .margin({ left: 2, right: 2 })
-    .borderRadius(6)
-    .backgroundColor($r('sys.color.comp_background_tertiary'))
-    .onClick(() => {
-      this.controller.openFile(info, this.getUIContext());
+    FileChip({
+      info: info,
+      fontSize: this.controller.fontSize,
+      onOpen: (target: FileChipInfo) => {
+        this.controller.openFile(target, this.getUIContext());
+      },
     });
   }
 
@@ -304,9 +279,18 @@ export struct MemoEditorArea {
               this.editingMemo.rebuildContent(this.controller.contentController, this.getUIContext(),
                 () => {
                   this.controller.onTodoMarkTap();
+                },
+                (info: FileChipInfo) => {
+                  return (): void => {
+                    this.fileChip(info);
+                  };
                 });
               // 内容就位后建立历史基线（第 0 条 = 初始状态，不可撤销回去）
               this.controller.resumeHistoryAndReset();
+              // 附件 chip 的 span 里**没有文件名**（valueResourceStr 只是个占位空格），
+              // 所以重建完必须把「第 k 个 chip ↔ 第 k 个附件块」的对应关系交给控制器，
+              // 否则保存时无从知道每一格是哪个文件
+              this.controller.resetAttachments(this.editingMemo.memoBlockArr);
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
@@ -321,9 +305,9 @@ export struct MemoEditorArea {
               return true;
             })
             // 维持「相册图片单独成段」：变更【后】检查紧邻的图片，前后缺换行就补上
-            //（详见 onDidChange 的注释；这里只用到 rangeAfter）
-            .onDidChange((_rangeBefore: TextRange, rangeAfter: TextRange) => {
-              this.controller.onDidChange(rangeAfter, this.getUIContext());
+            //（详见 onDidChange 的注释）
+            .onDidChange((rangeBefore: TextRange, rangeAfter: TextRange) => {
+              this.controller.onDidChange(rangeBefore, rangeAfter, this.getUIContext());
             })
             // 待办勾选框被点中后，等光标落定再判定点的是哪一张（见 onTodoMarkTap 的注释）
             .onSelectionChange((range: RichEditorRange) => {

@@ -7,6 +7,9 @@ import {
   builtinImageStyle,
   calcDesiredSize,
   doneTextColor,
+  isBuilderSpan,
+  MemoBlock,
+  mimeOfFileName,
   TODO_MARK_DONE,
   TODO_MARK_OPEN,
   toggledTodoMark
@@ -15,7 +18,6 @@ import { util } from '@kit.ArkTS';
 import { common, Want, wantConstant } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
-import { uniformTypeDescriptor } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
@@ -209,6 +211,22 @@ interface TodoMarkHit {
 }
 
 /**
+ * 附件侧表的一项：文档中的一个 chip。
+ *
+ * 【为什么必须自己维护】实测（见 FILE_ATTACHMENT_REVIEW.md §一）：框架**会**把 builder span
+ * 经由 `getSpans()` 返回（伪装成 image span），所以**位置**能直接读出来；
+ * 但它的 `valueResourceStr` 只是个占位空格，**没有任何文件名信息** ——
+ * 「这一格是哪个文件」只能由这张侧表记住。
+ */
+interface AttachmentEntry {
+  /** 编辑器坐标。增量维护（见 trackAttachmentDelete / trackAttachmentShift），保存前还会重新对齐 */
+  offset: number;
+
+  /** 相对 memo_files 的路径 `<uuid>/<原文件名>` —— 持久化进 MemoBlock.value 的就是它 */
+  relativePath: string;
+}
+
+/**
  * 这批新内容是不是"恰好一个换行" —— 也就是用户按了回车。
  *
  * 换行在编辑器里**永远单独成 span**（见 SPAN_EDITOR_REVIEW §二），所以这里能精确认出来。
@@ -245,64 +263,11 @@ function hasSpanBreakingContent(spans: Array<RichEditorSpan>): boolean {
   return false;
 }
 
-/**
- * 常见后缀 → MIME 的本地表。
- *
- * 有了它就不必为常见类型走一次系统查询，也避开 UTD 对未知后缀回落成"灵活类型"
- *（general.file，其 mimeTypes 可能是空、也可能是个通配值）的麻烦。
- * 表里没有的后缀再问系统，最后兜到 MIME_FALLBACK。
- */
-const MIME_BY_SUFFIX: Map<string, string> = new Map<string, string>([
-  ['txt', 'text/plain'], ['md', 'text/markdown'], ['csv', 'text/csv'],
-  ['json', 'application/json'], ['xml', 'text/xml'], ['html', 'text/html'],
-  ['pdf', 'application/pdf'],
-  ['doc', 'application/msword'],
-  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-  ['xls', 'application/vnd.ms-excel'],
-  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-  ['ppt', 'application/vnd.ms-powerpoint'],
-  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
-  ['zip', 'application/zip'], ['rar', 'application/vnd.rar'], ['7z', 'application/x-7z-compressed'],
-  ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
-  ['gif', 'image/gif'], ['webp', 'image/webp'], ['bmp', 'image/bmp'],
-  ['mp3', 'audio/mpeg'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
-  ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo'],
-]);
-
-/** 认不出后缀时用的 MIME */
-const MIME_FALLBACK = 'application/octet-stream';
+// MIME 的本地表与 mimeOfFileName 已移到 model/Memo.ets —— 插入与重建两条路径都要用
+//（重建时由存下来的相对路径重新推导 MIME，所以不需要单独持久化它）
 
 /** 拿不到原文件名时给附件的兜底名（不能为空 —— 它会当作沙箱路径的末段） */
 const DEFAULT_ATTACHMENT_NAME = 'attachment';
-
-/**
- * 文件名 → MIME。先查本地表，再问系统，最后兜底。
- *
- * 系统查询那一步的口径未能从声明确认（`filenameExtension` 要不要带前导点、
- * 未知后缀的返回是否可用），但本地表已覆盖常见类型，认不出也只是回落到
- * MIME_FALLBACK —— 这个不确定性不影响正确性，只影响冷门后缀的识别率。
- */
-function mimeOfFileName(name: string): string {
-  const dot = name.lastIndexOf('.');
-  if (dot < 0 || dot === name.length - 1) {
-    return MIME_FALLBACK;
-  }
-  const suffix = name.substring(dot + 1).toLowerCase();
-  const known = MIME_BY_SUFFIX.get(suffix);
-  if (known !== undefined) {
-    return known;
-  }
-  try {
-    const typeId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix);
-    const mime = uniformTypeDescriptor.getTypeDescriptor(typeId).mimeTypes?.[0];
-    if (mime !== undefined && mime !== '' && mime !== '*/*') {
-      return mime;
-    }
-  } catch (error) {
-    console.error(`[file] 查询 MIME 失败: ${suffix}. Cause: ${JSON.stringify(error)}`);
-  }
-  return MIME_FALLBACK;
-}
 
 @ObservedV2
 export class MemoEditorController {
@@ -355,6 +320,13 @@ export class MemoEditorController {
   private atomicStartIdx: number = 0;
   // 上一条记录产生的时间，用于判断是否落在合并时间窗内（0 表示没有可合并的上一条）
   private lastRecordTime: number = 0;
+  // 正在重建编辑器内容。重建期间不跟踪附件 —— 那时还不知道每个 chip 对应哪个文件，
+  // 由 resetAttachments 在重建完成后统一建立侧表
+  private isRebuilding: boolean = false;
+  // 附件侧表，按文档顺序排列。
+  // ⚠️ 只放纯数据：绝不能放 CustomBuilder / buildChip —— 本类是单例，
+  //    那会把组件实例一起吊住（见 insertFile 的告警）
+  private attachments: Array<AttachmentEntry> = [];
   // 段落对齐样式及其点击回调
   alignInfoArr: AlignmentInfo[] = [
     {
@@ -382,17 +354,174 @@ export class MemoEditorController {
     this.historyLength = 1;
     this.currRecordIdx = 0;
     this.lastRecordTime = 0;
+    // 附件侧表一并清空。两个调用点（进编辑页、重建完成）都是"会话重新开始"的时刻，
+    // 而本控制器是**单例**、字段跨页面存活 —— 不清就有可能把上一篇备忘的附件
+    // 带进这一篇（第 0 条历史是基线，语义上同样代表"从这里重新开始"）。
+    // 重建那条路径紧接着会调 resetAttachments 重新建立侧表
+    this.attachments = [];
   }
 
   /** 开始一段不记录历史的操作（重建编辑器内容会触发大量变更回调，必须抑制） */
   suspendHistory() {
     this.isRestoring = true;
+    // 只由 onReady 调用，所以这里同时就是"重建开始"的信号
+    this.isRebuilding = true;
   }
 
   /** 结束不记录历史的状态，并重建基线 */
   resumeHistoryAndReset() {
     this.isRestoring = false;
+    this.isRebuilding = false;
     this.resetHistory();
+  }
+
+  // ==================== 附件侧表 ====================
+
+  /**
+   * 变更【前】跟踪附件删除。
+   *
+   * 规则：offset 落在 [start, end) 内的附件被这次变更删掉了。
+   * 实测依据（E1 / E2）：单独删掉 chip 报 `rangeBefore=[0,1)`、删 `a[chip]b` 报 `[0,3)` ——
+   * 区间**恰好覆盖** chip 占的那一格，所以这条判据成立。
+   *
+   * ⚠️ 这是唯一能得知"哪个附件被删了"的时机，绝不能漏。
+   */
+  private trackAttachmentDelete(rangeBefore: TextRange): void {
+    if (this.isRebuilding || this.attachments.length === 0) {
+      return;
+    }
+    const start = rangeBefore.start ?? 0;
+    const end = rangeBefore.end ?? 0;
+    if (end <= start) {
+      return; // 纯插入（空区间）：没有东西被删
+    }
+    const kept: Array<AttachmentEntry> = [];
+    for (const entry of this.attachments) {
+      if (entry.offset >= start && entry.offset < end) {
+        continue; // 落在被删区间内
+      }
+      kept.push(entry);
+    }
+    if (kept.length !== this.attachments.length) {
+      this.attachments = kept;
+    }
+  }
+
+  /**
+   * 变更【后】跟踪附件位移。
+   *
+   * 规则：`offset >= rangeBefore.end` 的附件整体平移 `delta`。
+   * 实测依据（B / C）：在 chip 后面打字（`[1,1)`→`[1,2)`）chip 不动；
+   * 在它前面打字（`[0,0)`→`[0,1)`）chip 右移一格 —— 两条都符合。
+   *
+   * ⚠️ **刻意不受 `isRestoring` / `isRepairing` 影响**：
+   *   - 补段落换行（isRepairing）是**真实的内容变更**，不跟踪就会永久偏移
+   *   - 撤销/重做同理，跟踪它侧表才和文档保持一致
+   * 只有重建期间例外（那时侧表还没建立，见 isRebuilding）。
+   */
+  private trackAttachmentShift(rangeBefore: TextRange, rangeAfter: TextRange): void {
+    if (this.isRebuilding || this.attachments.length === 0) {
+      return;
+    }
+    const beforeLen = (rangeBefore.end ?? 0) - (rangeBefore.start ?? 0);
+    const afterLen = (rangeAfter.end ?? 0) - (rangeAfter.start ?? 0);
+    const delta = afterLen - beforeLen;
+    if (delta === 0) {
+      return;
+    }
+    const boundary = rangeBefore.end ?? 0;
+    for (const entry of this.attachments) {
+      if (entry.offset >= boundary) {
+        entry.offset += delta;
+      }
+    }
+  }
+
+  /**
+   * 重建完成后建立附件侧表。
+   *
+   * 顺序依据：`rebuildContent` 是**顺序重放**的，所以编辑器里第 k 个 chip span
+   * 必然对应 `memoBlockArr` 里第 k 个 builder 块。因此这里只需按顺序两两配对即可，
+   * 不需要任何 offset 推算 —— 位置直接来自 `getSpans()`。
+   *
+   * @param blocks 备忘的块序列（重建所依据的那份）
+   */
+  resetAttachments(blocks: Array<MemoBlock>): void {
+    const paths: Array<string> = [];
+    for (const block of blocks) {
+      if (block.type === 'builder') {
+        paths.push(block.value);
+      }
+    }
+    const offsets = this.builderSpanOffsets();
+    this.attachments = [];
+    const paired = Math.min(offsets.length, paths.length);
+    for (let i = 0; i < paired; i++) {
+      this.attachments.push({ offset: offsets[i], relativePath: paths[i] });
+    }
+    if (offsets.length !== paths.length) {
+      // 数量对不上说明重建时有块被跳过（多半是附件副本缺失），此后的对齐会整体错位
+      console.error(`[file] 附件侧表建立时数量不一致: 编辑器里 ${offsets.length} 个 chip，`
+        + `存档里 ${paths.length} 个附件块`);
+    }
+  }
+
+  /** 读当前编辑器里所有 chip 的坐标，按文档顺序 */
+  private builderSpanOffsets(): Array<number> {
+    const offsets: Array<number> = [];
+    try {
+      for (const span of this.contentController.getSpans()) {
+        if (isBuilderSpan(span)) {
+          offsets.push(span.spanPosition.spanRange[0]);
+        }
+      }
+    } catch (error) {
+      console.error(`[file] 读取 chip 坐标失败: ${JSON.stringify(error)}`);
+    }
+    offsets.sort((a, b) => a - b);
+    return offsets;
+  }
+
+  /**
+   * 保存前用编辑器里的真实状态重新对齐侧表。
+   *
+   * 这是**自校正**：增量跟踪万一漂移（漏掉某次变更、或遇到没预料到的框架行为），
+   * 这一步能把 offset 拉回真实值。chip 既然能在 `getSpans()` 里读到，就不必盲信累加结果。
+   *
+   * 顺序不变式：**附件之间永远不会互相换位**（不能拖动），所以"第 k 个 chip span
+   * ↔ 第 k 条侧表项"成立。数量对不上时只对上前 min(n, m) 个并记日志。
+   */
+  private syncAttachmentOffsets(): void {
+    if (this.attachments.length === 0) {
+      return;
+    }
+    const offsets = this.builderSpanOffsets();
+    if (offsets.length !== this.attachments.length) {
+      console.error(`[file] 附件侧表与编辑器不一致: 编辑器 ${offsets.length} 个 chip，`
+        + `侧表 ${this.attachments.length} 项。将按顺序对齐前 ${Math.min(offsets.length, this.attachments.length)} 个`);
+    }
+    const paired = Math.min(offsets.length, this.attachments.length);
+    for (let i = 0; i < paired; i++) {
+      if (this.attachments[i].offset !== offsets[i]) {
+        console.info(`[file] 附件 ${i} 的 offset 由 ${this.attachments[i].offset} 校正为 ${offsets[i]}`);
+        this.attachments[i].offset = offsets[i];
+      }
+    }
+  }
+
+  /**
+   * 按文档顺序返回附件的相对路径，供保存链路写入 `MemoBlock.value`。
+   *
+   * 会先做一次 `syncAttachmentOffsets()` —— 保存是"落盘"的关口，值得多花一次
+   * `getSpans()` 把位置校正到真实值。
+   */
+  attachmentPathsInOrder(): Array<string> {
+    this.syncAttachmentOffsets();
+    const paths: Array<string> = [];
+    for (const entry of this.attachments) {
+      paths.push(entry.relativePath);
+    }
+    return paths;
   }
 
   /**
@@ -411,6 +540,10 @@ export class MemoEditorController {
     if (this.isRestoring) {
       return;
     }
+    // 附件删除跟踪：必须放在下面所有早返回【之前】—— 删掉附件是全链路里
+    // 唯一能得知"哪个附件没了"的时机（插附件不触发任何回调，删附件才触发）
+    this.trackAttachmentDelete(value.rangeBefore);
+
     const rangeStart = value.rangeBefore.start ?? 0;
     const rangeEnd = value.rangeBefore.end ?? 0;
 
@@ -532,7 +665,13 @@ export class MemoEditorController {
    * 【只管行内图片】两条原则都只针对图片单元；普通文字不受任何约束。
    * 两类图片的约束不同（照片前后都要换行，勾选框只管前侧），所以判定分开写在循环里。
    */
-  onDidChange(rangeAfter: TextRange, uiContext: UIContext) {
+  onDidChange(rangeBefore: TextRange, rangeAfter: TextRange, uiContext: UIContext) {
+    // 附件位移跟踪：**刻意放在所有守卫之前**。
+    // 它必须看到每一次真实的内容变更，包括补段落换行（isRepairing）与撤销/重做（isRestoring）
+    // 产生的那些 —— 那些都是实实在在的文字增删，跳过跟踪侧表就会永久偏移。
+    // （重建期间由 trackAttachmentShift 内部按 isRebuilding 自行跳过）
+    this.trackAttachmentShift(rangeBefore, rangeAfter);
+
     // 先把回车标记消费掉：下面几个分支都可能提前 return，留着会污染下一次变更
     const enterOffset = this.pendingEnterOffset;
     this.pendingEnterOffset = -1;
@@ -1635,10 +1774,9 @@ export class MemoEditorController {
           return; // 失败原因已在 copyToSandbox 内部打过日志
         }
 
-        console.info(`File Info: ${JSON.stringify(info)}`);
         // 在真正插入的那一刻才造 builder：提前造好而中途页面被销毁的话，
         // 闭包里捕获的就是一个死组件
-        this.addFileChip(buildChip(info));
+        this.addFileChip(buildChip(info), info.relativePath);
       })
       .catch((error: BusinessError) => {
         // selectPhoto 那条链缺这一层 catch（既有问题，不动它）；新代码补上
@@ -1732,7 +1870,9 @@ export class MemoEditorController {
       console.error('[file] 取不到 host context，无法复制附件');
       return undefined;
     }
-    const dir = `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${util.generateRandomUUID()}`;
+    // uuid 既是目录名，也是附件的**持久化身份**（存进 MemoBlock.value），所以不能就地丢弃
+    const uuid = util.generateRandomUUID();
+    const dir = `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${uuid}`;
     const dest = `${dir}/${name}`;
     let srcFile: fileIo.File | undefined;
     try {
@@ -1751,24 +1891,32 @@ export class MemoEditorController {
         }
       }
     }
-    return { uri: fileUri.getUriFromPath(dest), name: name, mimeType: mimeOfFileName(name) };
+    return {
+      uri: fileUri.getUriFromPath(dest),
+      name: name,
+      mimeType: mimeOfFileName(name),
+      relativePath: `${uuid}/${name}`,
+    };
   }
 
   /**
    * 插入一个文件 chip。
    *
-   * 与相册照片不同，chip **行内插入、前后不补换行**，理由有三条：
-   *   ① 照片那套"独占一段"是靠 `onDidChange` 扫 `getSpans()` 维持的，而 builder span
-   *      对 `getSpans()` **不可见** —— 那个不变式对 chip 根本维持不了。插完看着像独占
-   *      一段，用户删掉旁边一个换行就退化成随机的行内 chip：一个会原地退化的半吊子保证
-   *   ② 语义上文件引用本来就是行内内容，与待办勾选框同类（`insertTodoMark` 也不加换行）
-   *   ③ 每多一次 `addTextSpan` 就多一次变更事件，也多一个"未缩放字号"的坑
+   * 与相册照片不同，chip **行内插入、前后不补换行**，理由有两条：
+   *   ① chip 是**行内**内容，与待办勾选框同类（`insertTodoMark` 也不加换行）。
+   *      文件引用本来就该跟文字排在同一行，"独占一段"不是我们想要的形状。
+   *      （早期这里写的是"builder span 对 `getSpans()` 不可见、所以那个不变式维持不了"，
+   *       后来实测发现它在 `getSpans()` 里其实可见 —— 论证作废，但结论不变）
+   *   ② 每多一次 `addTextSpan` 就多一次变更事件，也多一个"未缩放字号"的坑
    *
-   * 也**刻意不包 beginAtomic/endAtomic**：单次 `addBuilderSpan` 只产生一个变更事件，
-   * 没有东西可合并；而万一合并成功，撤销时 `deleteSpans` 覆盖到 chip 会把它删掉且
-   * 重建不回来（`SpanSnapshot` 没有 'builder' 类型），**合并只会扩大爆炸半径**。
+   * 也**刻意不包 beginAtomic/endAtomic**：单次 `addBuilderSpan` 只产生一个变更事件
+   *（实测插入附件根本不触发内容回调），没有东西可合并；而万一合并成功，
+   * 撤销时 `deleteSpans` 覆盖到 chip 会把它删掉且重建不回来
+   *（`SpanSnapshot` 没有 'builder' 类型），**合并只会扩大爆炸半径**。
+   *
+   * @param relativePath 附件在 memo_files 下的相对路径，登记进侧表供持久化使用
    */
-  private addFileChip(chip: CustomBuilder) {
+  private addFileChip(chip: CustomBuilder, relativePath: string) {
     try {
       const caret = this.contentController.getCaretOffset();
       if (caret < 0) {
@@ -1776,10 +1924,38 @@ export class MemoEditorController {
         return;
       }
       this.contentController.addBuilderSpan(chip, { offset: caret });
-      // 光标落到 chip 之后，用户可以接着打字。
-      // 用我们传进去的 offset + 1，而不是 addBuilderSpan 的返回值 ——
-      // 声明里那个返回值是 span index，不是编辑器坐标
-      // this.contentController.setCaretOffset(caret + 1);
+
+      // 新条目的位置**以框架实际放置的结果为准**，而不是靠推算。
+      //
+      // 插入 chip 不触发内容回调（实测），但"插入点之后整体右移一格"这件事到底有没有
+      // 被某个回调顺带报出来、在不同文档状态下是否一致，并没有验证过。
+      // 与其赌，不如插完直接读回编辑器里的真实坐标。
+      const observed = this.builderSpanOffsets();
+      const newIndex = observed.indexOf(caret);
+      if (newIndex < 0) {
+        console.error(`[file] 插入后没在 ${JSON.stringify(observed)} 中找到坐标 ${caret}，侧表可能失准`);
+      }
+      // ⚠️ **必须插到正确位置，不能 push。** 侧表的数组顺序就是文档顺序，
+      // 而新 chip 可能插在已有附件的**前面** —— 那些条目还在数组里占着靠前的位置，
+      // push 会把新条目排到它们后面，于是"第 k 个 chip ↔ 第 k 条记录"整个错位，
+      // 表现是两个附件保存重开后**对调**。（syncAttachmentOffsets 只会按索引校正 offset，
+      // 反而会让这个错误看起来是自洽的，掩盖过去）
+      let insertAt = this.attachments.length;
+      if (newIndex >= 0) {
+        insertAt = newIndex;
+      } else {
+        // 兜底：按 offset 有序插入
+        for (let i = 0; i < this.attachments.length; i++) {
+          if (this.attachments[i].offset >= caret) {
+            insertAt = i;
+            break;
+          }
+        }
+      }
+      this.attachments.splice(insertAt, 0, { offset: caret, relativePath: relativePath });
+      // 最后统一按观察到的真实坐标校正一遍。这一步同时把"上面的兜底推算准不准"
+      // 和"框架有没有重复补偿过"两个不确定性一起消掉
+      this.syncAttachmentOffsets();
     } catch (error) {
       console.error(`[file] 插入附件失败: ${JSON.stringify(error)}`);
     }
