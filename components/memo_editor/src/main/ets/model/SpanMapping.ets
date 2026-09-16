@@ -8,6 +8,25 @@ import { image } from '@kit.ImageKit';
 import { SpanSnapshot } from './ChangeRecord';
 
 /**
+ * 这个 span 是不是「文本类」—— 有可读的 value，且带 textStyle。
+ *
+ * 【为什么需要这道判据】类型声明保证 getSpans() 只返回文本 / 图片两种，但**运行时不保证**。
+ * 一旦漏出第三种 span（BuilderSpan 是最可能的候选），下面这些地方会立刻炸：
+ *   - `textStyleResult2Style` 第一行就读 `result.fontSize`（传 undefined 直接抛）
+ *   - 各处的 `(span as RichEditorTextSpanResult).value.xxx`（value 为 undefined）
+ * 而 `neighborAt` 是**每次按键**都会走到的路径，`toSnapshot` / `hasSpanBreakingContent`
+ * 是任何一次变更捕获都会走到的路径 —— 崩在这里等于编辑器不可用。
+ *
+ * 判据用「value 是字符串 && textStyle 有值」：图片 span 两者都不满足，正好被排除；
+ * 这也与 `Memo.updateContent` 用 `textStyle !== undefined` 判定文本 span 的口径一致。
+ * 认不出来的一律当「未知的原子单元」处理 —— 宁可少一次判定，不能崩。
+ */
+export function isTextLikeSpan(span: RichEditorSpan): boolean {
+  const textSpan = span as RichEditorTextSpanResult;
+  return typeof textSpan.value === 'string' && textSpan.textStyle !== undefined;
+}
+
+/**
  * 把编辑器返回的数字字体权重转回 FontWeight 枚举。
  * 0~8 对应 100~900；9~14 对应具名枚举
  */
@@ -63,11 +82,21 @@ export function spansTotalLength(spans: Array<SpanSnapshot>): number {
   return total;
 }
 
-/** 把一个 span 原样转成快照（不裁剪） */
-export function toSnapshot(span: RichEditorSpan): SpanSnapshot {
+/**
+ * 把一个 span 原样转成快照（不裁剪）。
+ *
+ * 不认识 span 类型（既非图片也非文本，见 isTextLikeSpan）时返回 undefined，由调用方跳过。
+ * 快照列表是编辑器内容的**真子集**是安全方向 —— 反过来造出一个 value 为 undefined 的
+ * "文本快照"，会在后面 clipSpans 的 substring 或 insertSpans 的 addTextSpan 处才炸。
+ */
+export function toSnapshot(span: RichEditorSpan): SpanSnapshot | undefined {
   const imageSpan = span as RichEditorImageSpanResult;
   if (imageSpan.imageStyle !== undefined) {
     return snapshotOfImage(imageSpan);
+  }
+  if (!isTextLikeSpan(span)) {
+    console.error(`[undo] 未知类型的 span（既非文本也非图片），已跳过快照`);
+    return undefined;
   }
   const textSpan = span as RichEditorTextSpanResult;
   return {
@@ -85,7 +114,10 @@ export function toSnapshots(spans: Array<RichEditorSpan>): Array<SpanSnapshot> {
   ordered.sort((a, b) => a.spanPosition.spanRange[0] - b.spanPosition.spanRange[0]);
   const result: Array<SpanSnapshot> = [];
   for (const span of ordered) {
-    result.push(toSnapshot(span));
+    const snapshot = toSnapshot(span);
+    if (snapshot !== undefined) {
+      result.push(snapshot);
+    }
   }
   return result;
 }
@@ -131,6 +163,10 @@ export function clipSpans(spans: Array<RichEditorSpan>, start: number, end: numb
       continue;
     }
 
+    if (!isTextLikeSpan(span)) {
+      console.error(`[undo] 未知类型的 span [${spanStart}, ${spanEnd})，已跳过`);
+      continue;
+    }
     const textSpan = span as RichEditorTextSpanResult;
     const from = Math.max(start, spanStart) - spanStart;
     const to = Math.min(end, spanEnd) - spanStart;

@@ -11,6 +11,15 @@ const PIXELMAP_IMG_VERTICAL_MARGIN = 12;
 // 图片文件存放的子目录名（相对于 filesDir）
 export const IMAGE_DIR_NAME = 'memo_images';
 
+/**
+ * 文件附件副本存放的子目录名（相对于 filesDir）。
+ *
+ * ⚠️ 与 memo_images 的生命周期**完全不同**：备忘录从不引用这里的文件
+ *（附件不持久化，见 FILE_ATTACHMENT_REVIEW.md），所以启动时整个目录可以直接清空 ——
+ * 届时里面必然全是上一轮的孤儿。清理入口是 clearAttachments()
+ */
+export const ATTACHMENT_DIR_NAME = 'memo_files';
+
 // 图片最长边上限（px）。解码时按此降采样，同时降低编码耗时、文件体积与内存占用。
 // 编辑区显示宽度约 1134px（手机），2000px 足够清晰。
 // 注意：显示尺寸以解码后的像素尺寸为基准计算，所以上限必须高于所有目标机型的屏幕像素宽度，
@@ -52,6 +61,7 @@ const BUILTIN_IMAGES: Map<string, Resource> = new Map<string, Resource>([
  * 改名会让那些图在重建时被当成未知资源而丢弃
  */
 export const TODO_MARK_OPEN = BUILTIN_IMAGE_CIRCLE;
+
 export const TODO_MARK_DONE = BUILTIN_IMAGE_CHECKMARK;
 
 // 已完成待办正文的文字透明度（0x80 = 128 ≈ 50%）
@@ -218,6 +228,57 @@ export function calcDesiredSize(width: number, height: number): image.Size | und
   }
   const ratio = MAX_IMAGE_SIDE / maxSide;
   return { width: Math.round(width * ratio), height: Math.round(height * ratio) };
+}
+
+/**
+ * 递归删除一个目录及其全部内容。
+ *
+ * 必须自己递归：`fileIo.rmdirSync` 遇到非空目录会抛 `13900032 - Directory not empty`，
+ * 它**不是**递归删除。
+ */
+function removeDirRecursively(path: string): void {
+  let names: Array<string>;
+  try {
+    names = fileIo.listFileSync(path);
+  } catch (error) {
+    return; // 目录不存在等情况 —— 没有东西要删，不是错误
+  }
+  for (const name of names) {
+    const child = `${path}/${name}`;
+    try {
+      if (fileIo.statSync(child).isDirectory()) {
+        removeDirRecursively(child);
+      } else {
+        fileIo.unlinkSync(child);
+      }
+    } catch (error) {
+      console.error(`[file] 删除附件残留失败: ${child}. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+  try {
+    fileIo.rmdirSync(path);
+  } catch (error) {
+    console.error(`[file] 删除附件目录失败: ${path}. Cause: ${JSON.stringify(error)}`);
+  }
+}
+
+/**
+ * 清空附件副本目录，在应用启动时调用。
+ *
+ * 为什么可以直接清空：附件**不持久化**（`Memo.updateContent` 看不见 builder span，
+ * 保存重开后 chip 必然消失），所以每次冷启动时 `memo_files` 里百分之百是上一轮的孤儿，
+ * 不存在"还在被某个备忘引用"的文件。详见 FILE_ATTACHMENT_REVIEW.md。
+ *
+ * ⚠️ 将来若给附件做了持久化，**这个函数必须改成引用计数式的回收**
+ *（对照 MemoService.reclaimOrphanImages 的白名单做法），否则会把正在用的副本删掉。
+ */
+export function clearAttachments(uiContext: UIContext): void {
+  const context = uiContext.getHostContext();
+  if (context === undefined) {
+    console.error('[file] 取不到 host context，跳过附件副本清理');
+    return;
+  }
+  removeDirRecursively(`${context.filesDir}/${ATTACHMENT_DIR_NAME}`);
 }
 
 export interface MemoBlock {

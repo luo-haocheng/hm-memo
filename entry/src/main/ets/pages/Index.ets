@@ -1,4 +1,4 @@
-import { Memo } from 'memo_editor';
+import { clearAttachments, Memo } from 'memo_editor';
 import {
   CategoryService,
   KVStore,
@@ -212,6 +212,9 @@ struct Index {
     // 数据已完整加载：延后到首帧之后再回收无引用的孤儿图片，避免拖慢启动
     setTimeout(() => {
       this.memoService.reclaimOrphanImages(this.uiContext);
+      // 附件副本不持久化（保存重开后 chip 必然消失），所以冷启动时 memo_files 里
+      // 百分之百是上一轮的孤儿，整个目录可以直接清空。详见 Memo.clearAttachments 的注释
+      clearAttachments(this.uiContext);
     }, 0);
   }
 

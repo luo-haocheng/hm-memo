@@ -1,6 +1,7 @@
 import { COLOR_LIST } from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
+import { FileChipInfo } from '../model/FileChipInfo';
 import { Memo } from '../model/Memo';
 
 @ComponentV2
@@ -189,6 +190,21 @@ export struct MemoEditorArea {
           this.controller.insertImage(this.getUIContext());
         });
 
+      // 插入文件附件（行内 chip）
+      Image($r('app.media.ic_attach'))
+        .width(20)
+        .height(20)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          // 外层箭头是"工厂"（请求时调一次、带数据），内层箭头才是 CustomBuilder
+          //（零参，框架稍后调）。addBuilderSpan 只收零参 builder，数据只能这样捕获进去
+          this.controller.insertFile(this.getUIContext(), (info: FileChipInfo) => {
+            return (): void => {
+              this.fileChip(info);
+            };
+          });
+        });
+
       // 插入待办勾选框（插到当前段落开头）
       Image($r('app.media.circle'))
         .width(20)
@@ -202,6 +218,49 @@ export struct MemoEditorArea {
     .width('80%')
     .borderRadius('50%')
     .backgroundColor($r('sys.color.background_tertiary'));
+  }
+
+  /**
+   * 文件附件 chip。**行内**原子单元，随文字流动，不单独成段。
+   *
+   * 参数用**单个对象**而非多个散参：这是 `@Builder` 支持"按引用传递"的前提形态
+   *（调用处写对象字面量才算按引用）。这里调用时传的是变量，**实际按值传递** ——
+   * 本场景数据是静态的（插入时定好就不再变），按值就够；
+   * 保持单对象形态是为了将来给 chip 加"选中 / 删除"等交互态时不必改调用约定。
+   *
+   * 点击必须挂在 chip 自己的内容上：`RichEditorBuilderSpanOptions` 里**没有** gesture
+   * 字段（只有 offset 与 accessibilitySpanOptions），不像 `addImageSpan` 那样能在插入时挂手势。
+   */
+  @Builder
+  fileChip(info: FileChipInfo) {
+    Row({ space: 4 }) {
+      Image($r('app.media.ic_attach'))
+        .width(14)
+        .height(14)
+        .fillColor($r('sys.color.font_primary'))
+        .draggable(false);
+
+      Text(info.name)
+        .fontSize(this.controller.fontSize)
+        .fontColor($r('sys.color.font_primary'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis });
+    }
+    // 必须有上界，否则一个长文件名会把整行撑开；给 Row 定死 maxWidth 才能让
+    // 子 Text 的省略号真正生效。注意**不能**写 width('100%') —— 那会让 chip 独占一行
+    .constraintSize({ maxWidth: 220 })
+    .padding({
+      left: 6,
+      right: 6,
+      top: 2,
+      bottom: 2
+    })
+    .margin({ left: 2, right: 2 })
+    .borderRadius(6)
+    .backgroundColor($r('sys.color.comp_background_tertiary'))
+    .onClick(() => {
+      this.controller.openFile(info, this.getUIContext());
+    });
   }
 
   build() {

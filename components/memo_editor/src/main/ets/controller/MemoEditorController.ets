@@ -1,5 +1,7 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
+import { FileChipInfo } from '../model/FileChipInfo';
 import {
+  ATTACHMENT_DIR_NAME,
   builtinImageNameOf,
   builtinImageResource,
   builtinImageStyle,
@@ -9,12 +11,14 @@ import {
   TODO_MARK_OPEN,
   toggledTodoMark
 } from '../model/Memo';
-import { common } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
+import { common, Want, wantConstant } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
-import { fileIo } from '@kit.CoreFileKit';
+import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
+import { uniformTypeDescriptor } from '@kit.ArkData';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
-import { clipSpans, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
+import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
 import { display } from '@kit.ArkUI';
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
 
@@ -69,8 +73,8 @@ function styleAt(spans: Array<RichEditorSpan>, position: number): RichEditorText
     if (span.spanPosition.spanRange[0] > position) {
       continue;
     }
-    const imageSpan = span as RichEditorImageSpanResult;
-    if (imageSpan.imageStyle === undefined) {
+    // 图片与未知类型都不带文本样式，跳过（见 isTextLikeSpan）
+    if (isTextLikeSpan(span)) {
       style = textStyleResult2Style((span as RichEditorTextSpanResult).textStyle);
     }
   }
@@ -147,6 +151,9 @@ function neighborAt(spans: Array<RichEditorSpan>, pos: number): NeighborKind {
     if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
       return 'other'; // 图片是原子单元，永远不是换行
     }
+    if (!isTextLikeSpan(span)) {
+      return 'other'; // 未知类型同样按原子单元处理（见 isTextLikeSpan）；此处每次按键都会走到，不能崩
+    }
     // 用 charAt 而不是下标取值：越界时返回空串，与 '\n' 比较自然是 'other'，无需额外判界
     return (span as RichEditorTextSpanResult).value.charAt(pos - range[0]) === '\n' ? 'newline' : 'other';
   }
@@ -163,8 +170,8 @@ function textSpanAt(spans: Array<RichEditorSpan>, pos: number): RichEditorTextSp
     if (pos < range[0] || pos >= range[1]) {
       continue;
     }
-    if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
-      return undefined;
+    if (!isTextLikeSpan(span)) {
+      return undefined; // 图片与未知类型都不是文本 span（见 isTextLikeSpan）
     }
     return span as RichEditorTextSpanResult;
   }
@@ -228,11 +235,73 @@ function hasSpanBreakingContent(spans: Array<RichEditorSpan>): boolean {
     if ((span as RichEditorImageSpanResult).imageStyle !== undefined) {
       return true;
     }
+    if (!isTextLikeSpan(span)) {
+      return true; // 未知类型一律视为"会切开 span"——它必然是原子单元、不与文本合并，与图片同理
+    }
     if ((span as RichEditorTextSpanResult).value.indexOf('\n') >= 0) {
       return true;
     }
   }
   return false;
+}
+
+/**
+ * 常见后缀 → MIME 的本地表。
+ *
+ * 有了它就不必为常见类型走一次系统查询，也避开 UTD 对未知后缀回落成"灵活类型"
+ *（general.file，其 mimeTypes 可能是空、也可能是个通配值）的麻烦。
+ * 表里没有的后缀再问系统，最后兜到 MIME_FALLBACK。
+ */
+const MIME_BY_SUFFIX: Map<string, string> = new Map<string, string>([
+  ['txt', 'text/plain'], ['md', 'text/markdown'], ['csv', 'text/csv'],
+  ['json', 'application/json'], ['xml', 'text/xml'], ['html', 'text/html'],
+  ['pdf', 'application/pdf'],
+  ['doc', 'application/msword'],
+  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['xls', 'application/vnd.ms-excel'],
+  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['ppt', 'application/vnd.ms-powerpoint'],
+  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  ['zip', 'application/zip'], ['rar', 'application/vnd.rar'], ['7z', 'application/x-7z-compressed'],
+  ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
+  ['gif', 'image/gif'], ['webp', 'image/webp'], ['bmp', 'image/bmp'],
+  ['mp3', 'audio/mpeg'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
+  ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo'],
+]);
+
+/** 认不出后缀时用的 MIME */
+const MIME_FALLBACK = 'application/octet-stream';
+
+/** 拿不到原文件名时给附件的兜底名（不能为空 —— 它会当作沙箱路径的末段） */
+const DEFAULT_ATTACHMENT_NAME = 'attachment';
+
+/**
+ * 文件名 → MIME。先查本地表，再问系统，最后兜底。
+ *
+ * 系统查询那一步的口径未能从声明确认（`filenameExtension` 要不要带前导点、
+ * 未知后缀的返回是否可用），但本地表已覆盖常见类型，认不出也只是回落到
+ * MIME_FALLBACK —— 这个不确定性不影响正确性，只影响冷门后缀的识别率。
+ */
+function mimeOfFileName(name: string): string {
+  const dot = name.lastIndexOf('.');
+  if (dot < 0 || dot === name.length - 1) {
+    return MIME_FALLBACK;
+  }
+  const suffix = name.substring(dot + 1).toLowerCase();
+  const known = MIME_BY_SUFFIX.get(suffix);
+  if (known !== undefined) {
+    return known;
+  }
+  try {
+    const typeId = uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(suffix);
+    const mime = uniformTypeDescriptor.getTypeDescriptor(typeId).mimeTypes?.[0];
+    if (mime !== undefined && mime !== '' && mime !== '*/*') {
+      return mime;
+    }
+  } catch (error) {
+    console.error(`[file] 查询 MIME 失败: ${suffix}. Cause: ${JSON.stringify(error)}`);
+  }
+  return MIME_FALLBACK;
 }
 
 @ObservedV2
@@ -1537,6 +1606,182 @@ export class MemoEditorController {
       console.error(`Failed to add image to styled string. Cause: ${JSON.stringify(error)}`);
     } finally {
       this.endAtomic();
+    }
+  }
+
+  /**
+   * 插入文件附件（行内 chip，不落盘）。
+   *
+   * 【为什么需要 buildChip 这个参数】`addBuilderSpan` 只接受零参的 `CustomBuilder`，
+   * 而每个 chip 的内容（文件名）和点击回调都不一样，数据只能靠**词法捕获**带进去；
+   * 又因为 builder 必须在组件作用域里构造（要闭包组件的 this、要有 UI 上下文），
+   * 所以只能由组件造好一个零参闭包再交进来。控制器不构造它，只当不透明的值转交。
+   *
+   * @param buildChip 组件提供的工厂：给出文件信息，返回该 chip 的 CustomBuilder
+   *
+   * ⚠️ **绝不要把 buildChip / 造出的 CustomBuilder / FileChipInfo 存进控制器的字段。**
+   *    本类是单例（`instance`），比 MemoEditorArea（每个 NavDestination 重建一次）活得久 ——
+   *    存下来会把组件实例一起吊住：既泄漏，闭包里的 this 又变成已销毁的组件。
+   */
+  insertFile(uiContext: UIContext, buildChip: (info: FileChipInfo) => CustomBuilder): void {
+    this.selectDocument(uiContext)
+      .then((uris) => {
+        if (!uris || uris.length < 1) {
+          return;
+        }
+        // 先拷进沙箱：picker 的临时授权转授不出去，直接拿它打开会让目标应用读不到内容
+        const info = this.copyToSandbox(uris[0], uiContext);
+        if (info === undefined) {
+          return; // 失败原因已在 copyToSandbox 内部打过日志
+        }
+
+        console.info(`File Info: ${JSON.stringify(info)}`);
+        // 在真正插入的那一刻才造 builder：提前造好而中途页面被销毁的话，
+        // 闭包里捕获的就是一个死组件
+        this.addFileChip(buildChip(info));
+      })
+      .catch((error: BusinessError) => {
+        // selectPhoto 那条链缺这一层 catch（既有问题，不动它）；新代码补上
+        console.error(`[file] 选择文件失败: ${JSON.stringify(error)}`);
+      });
+  }
+
+  /**
+   * 用系统应用打开附件。
+   *
+   * action 用**字面量**而不是常量：stage model 的 `wantConstant` 里没有 Action 枚举，
+   * 唯一的 `ACTION_VIEW_DATA` 定义在 `@ohos.ability.wantConstant`，那个已 @deprecated since 9。
+   *
+   * `FLAG_AUTH_READ_URI_PERMISSION` 必须带：目标应用对我们的沙箱文件没有权限，
+   * 得把读权限显式转授过去。只要读权限 —— 仅查看。
+   *
+   * ⚠️ **只有沙箱副本转授得出去**：picker 返回的 URI 那种临时授权是不能再次转移的，
+   * 直接拿它调 startAbility 会让目标应用被拉起来了却打不开（见 copyToSandbox 的注释）。
+   */
+  openFile(info: FileChipInfo, uiContext: UIContext): void {
+    const context = uiContext.getHostContext() as common.UIAbilityContext | undefined;
+    if (context === undefined) {
+      console.error('[file] 取不到 host context，无法打开文件');
+      return;
+    }
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: info.uri,
+      type: info.mimeType,
+      flags: wantConstant.Flags.FLAG_AUTH_READ_URI_PERMISSION,
+    };
+    context.startAbility(want)
+      .catch((error: BusinessError) => {
+        // 常见码：16000018（不允许跳第三方）、16000019（没有能处理该类型的应用）
+        console.error(`[file] 打开文件失败: ${info.name}. Cause: ${JSON.stringify(error)}`);
+      });
+  }
+
+  /** 选文件。与 selectPhoto 同一套路，换成 DocumentViewPicker；不需要任何权限 */
+  private async selectDocument(uiContext: UIContext): Promise<Array<string> | undefined> {
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('[file] 取不到 host context，无法拉起文件选择器');
+      return undefined;
+    }
+    const options = new picker.DocumentSelectOptions();
+    options.maxSelectNumber = 1;
+    // selectMode 不设：它的 syscap 是 FolderSelection（2in1 专属），手机上调不到；
+    // 默认值就是 FILE，正是我们要的
+    // fileSuffixFilters 不设 = 不限类型。将来要白名单在这里加
+    const documentPicker = new picker.DocumentViewPicker(context);
+    return await documentPicker.select(options);
+  }
+
+  /** URI → 显示名。`FileUri.name` 是 getter 且会抛（BusinessError），必须包起来 */
+  private displayNameOf(uri: string): string {
+    let name = '';
+    try {
+      name = new fileUri.FileUri(uri).name;
+    } catch (error) {
+      console.error(`[file] 解析文件名失败: ${uri}. Cause: ${JSON.stringify(error)}`);
+    }
+    if (!name) {
+      // 兜底：取 URI 末段
+      const slash = uri.lastIndexOf('/');
+      name = slash >= 0 ? uri.substring(slash + 1) : uri;
+    }
+    // 这个名字会直接当作沙箱路径的末段，必须挡掉路径分隔符；
+    // 再空就退一个固定名，否则会拼出 `memo_files/<uuid>/` 这种以目录结尾的路径
+    name = name.replaceAll('/', '_').replaceAll('\\', '_');
+    return name === '' ? DEFAULT_ATTACHMENT_NAME : name;
+  }
+
+  /**
+   * 把选中的文件复制进应用沙箱，返回插入 chip 所需的信息。
+   *
+   * 【为什么必须复制】`DocumentViewPicker` 返回的 URI，应用只拿到**临时授权**，
+   * 而这个授权**不能再次转移**给第三方应用 —— 而 `openFile` 里的
+   * FLAG_AUTH_READ_URI_PERMISSION 要做的恰恰是把它转授出去。真机实测表现为：
+   * 目标应用被拉起来了，但显示"预览失败"（读不到内容）。
+   * 拷进沙箱后我们就是文件的所有者，转授自己的文件没有任何限制。
+   *
+   * 【目录形态】`memo_files/<uuid>/<原文件名>` 而不是 `memo_files/<uuid>.<后缀>`：
+   * 目标应用标题栏显示的是 URI 末段的文件名，用 uuid 当文件名会让它在对方应用里
+   * 显示成乱码；套一层 uuid 目录既能保住原名，又避免两个同名附件互相覆盖。
+   */
+  private copyToSandbox(uri: string, uiContext: UIContext): FileChipInfo | undefined {
+    const name = this.displayNameOf(uri);
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('[file] 取不到 host context，无法复制附件');
+      return undefined;
+    }
+    const dir = `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${util.generateRandomUUID()}`;
+    const dest = `${dir}/${name}`;
+    let srcFile: fileIo.File | undefined;
+    try {
+      fileIo.mkdirSync(dir, true);
+      srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      fileIo.copyFileSync(srcFile.fd, dest);
+    } catch (error) {
+      console.error(`[file] 复制附件失败: ${name}. Cause: ${JSON.stringify(error)}`);
+      return undefined;
+    } finally {
+      if (srcFile) {
+        try {
+          fileIo.closeSync(srcFile);
+        } catch (error) {
+          console.error(`[file] 关闭附件源文件失败: ${name}. Cause: ${JSON.stringify(error)}`);
+        }
+      }
+    }
+    return { uri: fileUri.getUriFromPath(dest), name: name, mimeType: mimeOfFileName(name) };
+  }
+
+  /**
+   * 插入一个文件 chip。
+   *
+   * 与相册照片不同，chip **行内插入、前后不补换行**，理由有三条：
+   *   ① 照片那套"独占一段"是靠 `onDidChange` 扫 `getSpans()` 维持的，而 builder span
+   *      对 `getSpans()` **不可见** —— 那个不变式对 chip 根本维持不了。插完看着像独占
+   *      一段，用户删掉旁边一个换行就退化成随机的行内 chip：一个会原地退化的半吊子保证
+   *   ② 语义上文件引用本来就是行内内容，与待办勾选框同类（`insertTodoMark` 也不加换行）
+   *   ③ 每多一次 `addTextSpan` 就多一次变更事件，也多一个"未缩放字号"的坑
+   *
+   * 也**刻意不包 beginAtomic/endAtomic**：单次 `addBuilderSpan` 只产生一个变更事件，
+   * 没有东西可合并；而万一合并成功，撤销时 `deleteSpans` 覆盖到 chip 会把它删掉且
+   * 重建不回来（`SpanSnapshot` 没有 'builder' 类型），**合并只会扩大爆炸半径**。
+   */
+  private addFileChip(chip: CustomBuilder) {
+    try {
+      const caret = this.contentController.getCaretOffset();
+      if (caret < 0) {
+        console.error('[file] 光标位置无效，取消插入附件');
+        return;
+      }
+      this.contentController.addBuilderSpan(chip, { offset: caret });
+      // 光标落到 chip 之后，用户可以接着打字。
+      // 用我们传进去的 offset + 1，而不是 addBuilderSpan 的返回值 ——
+      // 声明里那个返回值是 span index，不是编辑器坐标
+      // this.contentController.setCaretOffset(caret + 1);
+    } catch (error) {
+      console.error(`[file] 插入附件失败: ${JSON.stringify(error)}`);
     }
   }
 }
