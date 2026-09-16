@@ -231,7 +231,6 @@ export struct MemoEditorArea {
   fileChip(info: FileChipInfo) {
     FileChip({
       info: info,
-      fontSize: this.controller.fontSize,
       onOpen: (target: FileChipInfo) => {
         this.controller.openFile(target, this.getUIContext());
       },

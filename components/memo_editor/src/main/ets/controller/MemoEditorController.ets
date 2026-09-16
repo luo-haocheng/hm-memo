@@ -649,7 +649,7 @@ export class MemoEditorController {
   /**
    * onDidChange —— 变更【后】触发，用来维护两类「内容各自成段」的原则：
    *
-   *   - 相册照片必须**独占一段**：前后两侧都得是换行
+   *   - 相册照片与文件附件 chip 必须**独占一段**：前后两侧都得是换行
    *   - 待办勾选框必须待在**段落开头**：前一格得是换行（或文档开头）
    *
    * 【为什么放在变更后】修复依据的是变更【后】的真实内容，只有这里读得到
@@ -706,8 +706,10 @@ export class MemoEditorController {
     const fixes: Map<number, ParagraphFix> = new Map<number, ParagraphFix>();
     for (const span of spans) {
       const range = span.spanPosition.spanRange;
-      if (isAlbumPhoto(span)) {
-        // 前侧：左边是普通字符或另一张图 → 图片已经和它挤在同一段了
+      // 相册照片与文件附件 chip 是**同一类**约束：都必须独占一段，前后都得是换行。
+      // chip 早期是按行内内容做的；能改成独占一段的依据见 FILE_ATTACHMENT_REVIEW.md
+      if (isAlbumPhoto(span) || isBuilderSpan(span)) {
+        // 前侧：左边是普通字符或另一个原子单元 → 已经和它挤在同一段了
         if (neighborAt(spans, range[0] - 1) === 'other') {
           fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
         }
@@ -1776,7 +1778,7 @@ export class MemoEditorController {
 
         // 在真正插入的那一刻才造 builder：提前造好而中途页面被销毁的话，
         // 闭包里捕获的就是一个死组件
-        this.addFileChip(buildChip(info), info.relativePath);
+        this.addFileChip(buildChip(info), info.relativePath, uiContext);
       })
       .catch((error: BusinessError) => {
         // selectPhoto 那条链缺这一层 catch（既有问题，不动它）；新代码补上
@@ -1900,64 +1902,106 @@ export class MemoEditorController {
   }
 
   /**
-   * 插入一个文件 chip。
+   * 插入一个文件 chip，并保证它**独占一段**（前后都是换行）—— 与相册照片同一类约束。
    *
-   * 与相册照片不同，chip **行内插入、前后不补换行**，理由有两条：
-   *   ① chip 是**行内**内容，与待办勾选框同类（`insertTodoMark` 也不加换行）。
-   *      文件引用本来就该跟文字排在同一行，"独占一段"不是我们想要的形状。
-   *      （早期这里写的是"builder span 对 `getSpans()` 不可见、所以那个不变式维持不了"，
-   *       后来实测发现它在 `getSpans()` 里其实可见 —— 论证作废，但结论不变）
-   *   ② 每多一次 `addTextSpan` 就多一次变更事件，也多一个"未缩放字号"的坑
+   * 骨架照抄 `addImage`：先看插入点两侧已有的邻居，缺哪个补哪个，而不是无脑补两个换行
+   *（本来就在空行上、再补一个会多出空段落）。两边的**判定与补法完全一致**，
+   * 只是插入 API 不同（`addBuilderSpan` 要显式 offset）。
    *
-   * 也**刻意不包 beginAtomic/endAtomic**：单次 `addBuilderSpan` 只产生一个变更事件
-   *（实测插入附件根本不触发内容回调），没有东西可合并；而万一合并成功，
-   * 撤销时 `deleteSpans` 覆盖到 chip 会把它删掉且重建不回来
-   *（`SpanSnapshot` 没有 'builder' 类型），**合并只会扩大爆炸半径**。
+   * 【为什么包 beginAtomic】"补前换行 + 插 chip + 补尾换行"是一次用户操作。
+   * 不合并的话，两条换行的记录会各自独立，撤销一次只退掉其中一个，chip 变成行内、
+   * 下次编辑又被修复路径补回来 —— 表现为"撤销按了没反应"。
+   * 这是"新功能不为撤销/重做做适配"约定的一次**有意破例**：理由是这样合并与既有
+   * `addImage` 的行为一致，而不是为新功能发明新机制。
    *
    * @param relativePath 附件在 memo_files 下的相对路径，登记进侧表供持久化使用
    */
-  private addFileChip(chip: CustomBuilder, relativePath: string) {
+  private addFileChip(chip: CustomBuilder, relativePath: string, uiContext: UIContext) {
+    this.beginAtomic();
     try {
       const caret = this.contentController.getCaretOffset();
       if (caret < 0) {
         console.error('[file] 光标位置无效，取消插入附件');
         return;
       }
-      this.contentController.addBuilderSpan(chip, { offset: caret });
+      // 取全量 span：文末插入时区间 [caret-1, caret+1) 会越过文档末尾，全量调用没有越界风险
+      const spans = this.contentController.getSpans();
+      // 前置：左边是普通字符或图片才要补（'newline' 已经有了，'boundary' 是文档开头）
+      const needLeading = neighborAt(spans, caret - 1) === 'other';
+      // 后置：'newline' 说明已经有换行；'other'（文字 / 图片 / 另一个 chip）和
+      // 'boundary'（文末）都要补，保证 chip 后面永远另起一行、光标有处可落
+      const needTrailing = neighborAt(spans, caret) !== 'newline';
 
-      // 新条目的位置**以框架实际放置的结果为准**，而不是靠推算。
-      //
-      // 插入 chip 不触发内容回调（实测），但"插入点之后整体右移一格"这件事到底有没有
-      // 被某个回调顺带报出来、在不同文档状态下是否一致，并没有验证过。
-      // 与其赌，不如插完直接读回编辑器里的真实坐标。
-      const observed = this.builderSpanOffsets();
-      const newIndex = observed.indexOf(caret);
-      if (newIndex < 0) {
-        console.error(`[file] 插入后没在 ${JSON.stringify(observed)} 中找到坐标 ${caret}，侧表可能失准`);
+      let chipOffset = caret;
+      if (needLeading) {
+        const beforeSpan = textSpanAt(spans, caret - 1);
+        const beforeParagraph = beforeSpan ? beforeSpan.paragraphStyle : undefined;
+        this.contentController.addTextSpan('\n', {
+          offset: caret,
+          // 这个换行是并进【前一段】的，样式必须跟前一段一致：样式不同就不会与前一段合并，
+          // 前一段有被拆成两段、对齐方式跟着漂移的风险。
+          // 左边是图片 / chip（取不到文本样式）时回落输入样式
+          style: beforeSpan ? textStyleResult2Style(beforeSpan.textStyle) : this.effectiveTypingStyle(uiContext),
+          paragraphStyle: beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined,
+        });
+        chipOffset += 1;
       }
-      // ⚠️ **必须插到正确位置，不能 push。** 侧表的数组顺序就是文档顺序，
-      // 而新 chip 可能插在已有附件的**前面** —— 那些条目还在数组里占着靠前的位置，
-      // push 会把新条目排到它们后面，于是"第 k 个 chip ↔ 第 k 条记录"整个错位，
-      // 表现是两个附件保存重开后**对调**。（syncAttachmentOffsets 只会按索引校正 offset，
-      // 反而会让这个错误看起来是自洽的，掩盖过去）
-      let insertAt = this.attachments.length;
-      if (newIndex >= 0) {
-        insertAt = newIndex;
-      } else {
-        // 兜底：按 offset 有序插入
-        for (let i = 0; i < this.attachments.length; i++) {
-          if (this.attachments[i].offset >= caret) {
-            insertAt = i;
-            break;
-          }
-        }
+
+      this.contentController.addBuilderSpan(chip, { offset: chipOffset });
+
+      if (needTrailing) {
+        // 后置换行开启的是 chip【之后】那一段，用输入样式。
+        // 必须显式给样式并做字体缩放换算，否则这个换行 span 会带上"未缩放"的字号，
+        // 既让它自己的行高与正文不一致，也会被撤销/重做的"继承变更点样式"逻辑取走并传播出去
+        this.contentController.addTextSpan('\n', {
+          offset: chipOffset + 1,
+          style: this.effectiveTypingStyle(uiContext),
+        });
       }
-      this.attachments.splice(insertAt, 0, { offset: caret, relativePath: relativePath });
-      // 最后统一按观察到的真实坐标校正一遍。这一步同时把"上面的兜底推算准不准"
-      // 和"框架有没有重复补偿过"两个不确定性一起消掉
-      this.syncAttachmentOffsets();
+
+      // 光标落到 chip 下方那一行的行首，用户可以接着输入（与 addImage 一致）
+      this.contentController.setCaretOffset(chipOffset + 2);
+
+      this.registerAttachment(chipOffset, relativePath);
+      // 以上几步都会被 onWillChange 自动捕获，并由原子区间合并成一条记录
     } catch (error) {
       console.error(`[file] 插入附件失败: ${JSON.stringify(error)}`);
+    } finally {
+      this.endAtomic();
     }
+  }
+
+  /**
+   * 把新插入的 chip 登记进附件侧表。
+   *
+   * ⚠️ 位置**以框架实际放置的结果为准**，不靠推算：插入 chip 本身不触发内容回调（实测），
+   * 落在哪一格没有直接信号，索性插完读回来。
+   *
+   * ⚠️ **必须插到数组的正确位置，不能 push。** 侧表的数组顺序就是文档顺序，
+   * 而新 chip 可能插在已有附件的**前面** —— 那些条目还占着靠前的位置，push 会把新条目
+   * 排到它们后面，于是"第 k 个 chip ↔ 第 k 条记录"整个错位，表现是两个附件保存后**对调**。
+   */
+  private registerAttachment(chipOffset: number, relativePath: string) {
+    const observed = this.builderSpanOffsets();
+    const newIndex = observed.indexOf(chipOffset);
+    if (newIndex < 0) {
+      console.error(`[file] 插入后没在 ${JSON.stringify(observed)} 中找到坐标 ${chipOffset}，侧表可能失准`);
+    }
+    let insertAt = this.attachments.length;
+    if (newIndex >= 0) {
+      insertAt = newIndex;
+    } else {
+      // 兜底：按 offset 有序插入
+      for (let i = 0; i < this.attachments.length; i++) {
+        if (this.attachments[i].offset >= chipOffset) {
+          insertAt = i;
+          break;
+        }
+      }
+    }
+    this.attachments.splice(insertAt, 0, { offset: chipOffset, relativePath: relativePath });
+    // 统一按观察到的真实坐标校正一遍：同时消掉"兜底推算准不准"与
+    // "补换行产生的回调有没有重复平移"两个不确定性
+    this.syncAttachmentOffsets();
   }
 }

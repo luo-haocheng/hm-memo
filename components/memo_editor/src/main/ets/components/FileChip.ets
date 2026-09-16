@@ -15,39 +15,36 @@ import { FileChipInfo } from '../model/FileChipInfo';
 @ComponentV2
 export struct FileChip {
   @Param @Require info: FileChipInfo;
-  /**
-   * 字号。编辑区传工具栏当前值，预览传固定值。
-   *
-   * ⚠️ 拖动字号滑块**不会**改变已经插好的 chip —— builder span 的内容只创建一次、
-   * 之后由框架缓存。这是预期行为，不是 bug（见 FILE_ATTACHMENT_REVIEW.md）。
-   */
-  @Param fontSize: number = 14;
   @Event onOpen: (info: FileChipInfo) => void = () => {
   };
 
   build() {
-    Row({ space: 4 }) {
-      Image($r('app.media.ic_attach'))
-        .width(14)
-        .height(14)
-        .fillColor($r('sys.color.font_primary'))
-        .draggable(false);
+    Row() {
+      Row({ space: 4 }) {
+        Image($r('app.media.ic_attach'))
+          .height('100%')
+          .aspectRatio(1)
+          .layoutWeight(0)
+          .draggable(false)
+          .fillColor($r('sys.color.font_primary'));
 
-      Text(this.info.name)
-        .fontSize(this.fontSize)
-        .fontColor($r('sys.color.font_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis });
+        Text(this.info.name)
+          .maxLines(1)
+          .fontSize(12)
+          .layoutWeight(1)
+          .fontColor($r('sys.color.font_primary'))
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+      }
+      .height(80)
+      .margin(12)
+      .padding(12)
+      .borderRadius(16)
+      .backgroundColor($r('sys.color.comp_background_tertiary'))
+      .onClick(() => {
+        this.onOpen(this.info);
+      });
     }
-    // 必须有上界，否则一个长文件名会把整行撑开；给 Row 定死 maxWidth 才能让
-    // 子 Text 的省略号真正生效。注意**不能**写 width('100%') —— 那会让 chip 独占一行
-    .constraintSize({ maxWidth: 220 })
-    .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-    .margin({ left: 2, right: 2 })
-    .borderRadius(6)
-    .backgroundColor($r('sys.color.comp_background_tertiary'))
-    .onClick(() => {
-      this.onOpen(this.info);
-    });
+    .width('100%')
+    .justifyContent(FlexAlign.Center);
   }
 }
