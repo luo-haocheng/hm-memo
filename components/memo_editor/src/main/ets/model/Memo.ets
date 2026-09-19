@@ -129,8 +129,8 @@ export const BUILTIN_IMAGE_CHECKMARK = 'checkmark';
  * 备忘里存的是**名称**而不是资源 id —— id 由构建期分配，会随资源增删而变
  */
 const BUILTIN_IMAGES: Map<string, Resource> = new Map<string, Resource>([
-  [BUILTIN_IMAGE_CIRCLE, $r('app.media.circle')],
-  [BUILTIN_IMAGE_CHECKMARK, $r('app.media.checkmark')],
+  [BUILTIN_IMAGE_CIRCLE, $r('app.media.ic_todo')],
+  [BUILTIN_IMAGE_CHECKMARK, $r('app.media.ic_check')],
 ]);
 
 /**
