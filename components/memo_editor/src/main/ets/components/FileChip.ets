@@ -1,4 +1,5 @@
 import { FileChipInfo } from '../model/FileChipInfo';
+import { MIME_ICON } from '../model/Memo';
 
 /**
  * 文件附件 chip 的显示。**行内**原子单元，随文字流动，不单独成段。
@@ -21,12 +22,19 @@ export struct FileChip {
   build() {
     Row() {
       Row({ space: 4 }) {
-        Image($r('app.media.ic_attach'))
-          .height('100%')
-          .aspectRatio(1)
-          .layoutWeight(0)
-          .draggable(false)
-          .fillColor($r('sys.color.font_primary'));
+        if (MIME_ICON.has(this.info.mimeType)) {
+          Image(MIME_ICON.get(this.info.mimeType))
+            .height('100%')
+            .aspectRatio(1)
+            .layoutWeight(0)
+            .draggable(false);
+        } else {
+          Image($r('app.media.mime_unknow'))
+            .height('100%')
+            .aspectRatio(1)
+            .layoutWeight(0)
+            .draggable(false);
+        }
 
         Text(this.info.name)
           .maxLines(1)

@@ -34,22 +34,57 @@ export const ATTACHMENT_DIR_NAME = 'memo_files';
  *（general.file，其 mimeTypes 可能是空、也可能是个通配值）的麻烦。
  * 表里没有的后缀再问系统，最后兜到 MIME_FALLBACK。
  */
-const MIME_BY_SUFFIX: Map<string, string> = new Map<string, string>([
-  ['txt', 'text/plain'], ['md', 'text/markdown'], ['csv', 'text/csv'],
-  ['json', 'application/json'], ['xml', 'text/xml'], ['html', 'text/html'],
-  ['pdf', 'application/pdf'],
-  ['doc', 'application/msword'],
-  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-  ['xls', 'application/vnd.ms-excel'],
-  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-  ['ppt', 'application/vnd.ms-powerpoint'],
-  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
-  ['zip', 'application/zip'], ['rar', 'application/vnd.rar'], ['7z', 'application/x-7z-compressed'],
-  ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
-  ['gif', 'image/gif'], ['webp', 'image/webp'], ['bmp', 'image/bmp'],
-  ['mp3', 'audio/mpeg'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
-  ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo'],
-]);
+const MIME_BY_SUFFIX: Map<string, string> = new Map<string, string>(
+  [
+    ['txt', 'text/plain'], ['md', 'text/markdown'], ['csv', 'text/csv'],
+    ['json', 'application/json'], ['xml', 'text/xml'], ['html', 'text/html'],
+    ['pdf', 'application/pdf'],
+    ['doc', 'application/msword'],
+    ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['xls', 'application/vnd.ms-excel'],
+    ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['ppt', 'application/vnd.ms-powerpoint'],
+    ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    ['zip', 'application/zip'], ['rar', 'application/vnd.rar'], ['7z', 'application/x-7z-compressed'],
+    ['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'],
+    ['gif', 'image/gif'], ['webp', 'image/webp'], ['bmp', 'image/bmp'],
+    ['mp3', 'audio/mpeg'], ['wav', 'audio/wav'], ['m4a', 'audio/mp4'],
+    ['mp4', 'video/mp4'], ['mov', 'video/quicktime'], ['avi', 'video/x-msvideo'],
+  ]
+);
+
+export const MIME_ICON: Map<string, Resource> = new Map<string, Resource>(
+  [
+    ['text/plain', $r('app.media.mime_txt')],
+    ['text/markdown', $r('app.media.mime_md')],
+    ['text/csv', $r('app.media.mime_csv')],
+    ['application/json', $r('app.media.mime_json')],
+    ['text/html', $r('app.media.mime_html')],
+    ['text/xml', $r('app.media.mime_xml')],
+    ['application/pdf', $r('app.media.mime_pdf')],
+    ['application/msword', $r('app.media.mime_word')],
+    ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', $r('app.media.mime_word')],
+    ['application/vnd.ms-excel', $r('app.media.mime_excel')],
+    ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', $r('app.media.mime_excel')],
+    ['application/vnd.ms-powerpoint', $r('app.media.mime_ppt')],
+    ['application/vnd.openxmlformats-officedocument.presentationml.presentation', $r('app.media.mime_ppt')],
+    ['application/zip', $r('app.media.mime_zip')],
+    ['application/zip', $r('app.media.mime_zip')],
+    ['application/vnd.rar', $r('app.media.mime_rar')],
+    ['application/x-7z-compressed', $r('app.media.mime_7z')],
+    ['image/png', $r('app.media.mime_image')],
+    ['image/jpeg', $r('app.media.mime_image')],
+    ['image/gif', $r('app.media.mime_image')],
+    ['image/webp', $r('app.media.mime_image')],
+    ['image/bmp', $r('app.media.mime_image')],
+    ['audio/mpeg', $r('app.media.mime_audio')],
+    ['audio/wav', $r('app.media.mime_audio')],
+    ['audio/mp4', $r('app.media.mime_audio')],
+    ['video/mp4', $r('app.media.mime_video')],
+    ['video/quicktime', $r('app.media.mime_video')],
+    ['video/x-msvideo', $r('app.media.mime_video')],
+  ]
+);
 
 /** 认不出后缀时用的 MIME */
 const MIME_FALLBACK = 'application/octet-stream';
