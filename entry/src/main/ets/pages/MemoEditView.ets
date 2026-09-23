@@ -27,11 +27,6 @@ struct MemoEditView {
     this.editorController.initState();
   }
 
-  aboutToDisappear(): void {
-    // 还原默认上抬模式
-    this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
-  }
-
   @Builder
   toolBar() {
     if (!this.isMemoSaved) {
@@ -167,6 +162,12 @@ struct MemoEditView {
           this.currentMemo = currentMemo;
         }
       }
+    })
+    .onBackPressed(() => {
+      // 还原默认上抬模式
+      this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
+
+      return false;
     });
   }
 }
