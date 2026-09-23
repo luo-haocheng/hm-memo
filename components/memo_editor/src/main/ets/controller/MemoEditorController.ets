@@ -294,8 +294,6 @@ export class MemoEditorController {
   @Trace fontSize: number = DEFAULT_FONT_SIZE;
   // 当前段落对齐样式
   @Trace alignStyle: TextAlign = TextAlign.Start;
-  // 显示的扩展工具栏索引号 0-关闭扩展工具栏 1-显示调色板 2-显示段落样式选项栏
-  @Trace showToolBarIndex: number = 0;
   // 指向当前生效的历史记录下标。0 是"初始基线"，不可撤销回去
   @Trace currRecordIdx: number = -1;
   // 历史长度：单独暴露给 UI，驱动重做按钮的灰显
@@ -1630,7 +1628,6 @@ export class MemoEditorController {
     this.isBold = false;
     this.isItalics = false;
     this.isUnderline = false;
-    this.showToolBarIndex = 0;
     this.alignStyle = TextAlign.Start;
   }
 

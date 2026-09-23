@@ -16,16 +16,136 @@ export struct MemoEditorArea {
   @Event saveStatusChange: (isSaved: boolean) => void = () => {
   };
   private controller: MemoEditorController = MemoEditorController.instance;
+  private styleDialogId = -1;
 
   @Builder
-  fontStyleBar() {
+  styleDialog() {
     Column() {
       Row() {
-        Text('A')
-          .fontSize(10)
-          .fontColor($r('sys.color.font_secondary'));
+        Text('样式')
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.font_primary'));
 
-        Blank();
+        Image($r('app.media.xmark'))
+          .width(32)
+          .height(32)
+          .padding(8)
+          .borderRadius('50%')
+          .fillColor($r('sys.color.font_primary'))
+          .backgroundColor($r('sys.color.comp_background_list_card'))
+          .onClick(() => {
+            try {
+              this.getUIContext().getPromptAction().closeCustomDialog(this.styleDialogId);
+            } catch (error) {
+              console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
+            }
+          });
+      }
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Row() {
+        // 加粗
+        Image($r('app.media.ic_bold'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.controller.isBold = !this.controller.isBold;
+            this.controller.updateTextStyle({
+              fontWeight: this.controller.isBold ? FontWeight.Bold : FontWeight.Normal
+            });
+          });
+
+        // 斜体
+        Image($r('app.media.ic_italics'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.controller.isItalics = !this.controller.isItalics;
+            this.controller.updateTextStyle({
+              fontStyle: this.controller.isItalics ? FontStyle.Italic : FontStyle.Normal
+            });
+          });
+
+        // 下划线
+        Image($r('app.media.ic_underline'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.controller.isUnderline = !this.controller.isUnderline;
+            let decoration = this.controller.isUnderline ? TextDecorationType.Underline : TextDecorationType.None;
+            this.controller.updateTextStyle({
+              decoration: { type: decoration, }
+            });
+          });
+
+        ForEach(
+          this.controller.alignInfoArr,
+          (item: AlignmentInfo) => {
+            Image(item.icon)
+              .width(24)
+              .fillColor($r('sys.color.font_primary'))
+              .onClick(() => {
+                this.controller.alignStyle = item.value;
+                this.controller.updateParagraphStyle({ textAlign: this.controller.alignStyle });
+              });
+          },
+          (item: AlignmentInfo) => JSON.stringify(item)
+        );
+      }
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Divider()
+        .width('100%')
+        .strokeWidth(1)
+        .color($r('sys.color.ohos_id_color_button_divider'));
+
+      Row() {
+        ForEach(
+          COLOR_LIST,
+          (color: ResourceColor, index: number) => {
+            Stack() {
+              Circle({ width: 16, height: 16 })
+                .fill(color);
+
+              if (this.controller.colorIdx === index) {
+                Circle({ width: 24, height: 24 })
+                  .fillOpacity(0)
+                  .borderWidth(2)
+                  .borderRadius(12)
+                  .borderColor(Color.Red);
+              }
+            }
+            .onClick(() => {
+              this.controller.colorIdx = index;
+              this.controller.updateTextStyle({
+                fontColor: COLOR_LIST[this.controller.colorIdx]
+              });
+            });
+          },
+          (color: ResourceColor) => JSON.stringify(color),
+        );
+      }
+      .width('100%')
+      .padding({ top: 16, bottom: 16 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Divider()
+        .width('100%')
+        .strokeWidth(1)
+        .color($r('sys.color.ohos_id_color_button_divider'));
+
+      Row() {
+        Text('Aa')
+          .fontSize(12)
+          .fontColor($r('sys.color.font_secondary'));
 
         Row() {
           Slider({
@@ -35,8 +155,7 @@ export struct MemoEditorArea {
             step: 2,
             style: SliderStyle.InSet,
           })
-            .showSteps(true)
-            .trackThickness(20)
+            .trackThickness(18)
             .trackColor($r('sys.color.comp_background_secondary'))
             .selectedColor($r('sys.color.comp_background_emphasize'))
             .blockSize({ width: 12, height: 12 })
@@ -51,72 +170,17 @@ export struct MemoEditorArea {
         }
         .width('90%');
 
-        Blank();
-
-        Text('A')
+        Text('Aa')
           .fontSize(16)
           .fontColor($r('sys.color.font_secondary'));
       }
-      .height(50)
       .width('100%')
-      .padding({ left: '4%', right: '4%' });
-
-      Flex({
-        justifyContent: FlexAlign.SpaceAround,
-        alignItems: ItemAlign.Center,
-      }) {
-        ForEach(
-          COLOR_LIST,
-          (color: ResourceColor, index: number) => {
-            Stack() {
-              Circle({ width: 16, height: 16 })
-                .fill(color);
-
-              Circle({ width: 24, height: 24 })
-                .fillOpacity(0)
-                .borderWidth(2)
-                .borderRadius(12)
-                .borderColor(this.controller.colorIdx === index ? Color.Red : Color.Black);
-            }
-            .onClick(() => {
-              this.controller.colorIdx = index;
-              this.controller.updateTextStyle({
-                fontColor: COLOR_LIST[this.controller.colorIdx]
-              });
-            });
-          },
-          (color: ResourceColor) => JSON.stringify(color),
-        );
-      }
-      .height(50)
-      .width('100%');
+      .padding({ top: 16, bottom: 16 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
     }
-    .height(100)
-    .width('100%');
-  }
-
-  @Builder
-  paragraphAlignBar() {
-    Flex({
-      justifyContent: FlexAlign.SpaceAround,
-      alignItems: ItemAlign.Center,
-    }) {
-      ForEach(
-        this.controller.alignInfoArr,
-        (item: AlignmentInfo) => {
-          Image(item.icon)
-            .width(24)
-            .fillColor($r('sys.color.font_primary'))
-            .onClick(() => {
-              this.controller.alignStyle = item.value;
-              this.controller.updateParagraphStyle({ textAlign: this.controller.alignStyle });
-            });
-        },
-        (item: AlignmentInfo) => JSON.stringify(item)
-      );
-    }
-    .height(56)
-    .width('100%');
+    .width('100%')
+    .padding({ left: 12, right: 12, bottom: AppStorage.get('BottomRectHeight') as number });
   }
 
   @Builder
@@ -130,71 +194,45 @@ export struct MemoEditorArea {
         .width(20)
         .fillColor(COLOR_LIST[this.controller.colorIdx])
         .onClick(() => {
-          if (this.controller.showToolBarIndex !== 1) {
-            this.controller.showToolBarIndex = 1;
-          } else {
-            this.controller.showToolBarIndex = 0;
-          }
+          this.getUIContext()
+            .getPromptAction()
+            .openCustomDialog({
+              width: '100%',
+              builder: () => {
+                this.styleDialog();
+              },
+              alignment: DialogAlignment.Bottom,
+              transition: TransitionEffect.SLIDE,
+              keyboardAvoidMode: KeyboardAvoidMode.NONE,
+              offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+            })
+            .then((dialogId: number) => {
+              this.styleDialogId = dialogId;
+            })
+            .catch((error: BusinessError) => {
+              console.error(`Failed to openCustomDialog. Cause: ${JSON.stringify(error)}`);
+            });
         });
 
-      // 加粗
-      Image($r('app.media.ic_bold'))
-        .width(20)
+      // 插入待办勾选框（插到当前段落开头）
+      Image($r('app.media.checkmark_circle'))
+        .width(22)
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
-          this.controller.isBold = !this.controller.isBold;
-          this.controller.updateTextStyle({
-            fontWeight: this.controller.isBold ? FontWeight.Bold : FontWeight.Normal
-          });
-        });
-
-      // 斜体
-      Image($r('app.media.ic_italics'))
-        .width(20)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          this.controller.isItalics = !this.controller.isItalics;
-          this.controller.updateTextStyle({
-            fontStyle: this.controller.isItalics ? FontStyle.Italic : FontStyle.Normal
-          });
-        });
-
-      // 下划线
-      Image($r('app.media.ic_underline'))
-        .width(20)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          this.controller.isUnderline = !this.controller.isUnderline;
-          let decoration = this.controller.isUnderline ? TextDecorationType.Underline : TextDecorationType.None;
-          this.controller.updateTextStyle({
-            decoration: { type: decoration, }
-          });
-        });
-
-      // 段落对齐
-      Image(this.controller.alignInfoArr[this.controller.alignStyle].icon)
-        .width(20)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          if (this.controller.showToolBarIndex !== 2) {
-            this.controller.showToolBarIndex = 2;
-          } else {
-            this.controller.showToolBarIndex = 0;
-          }
+          this.controller.insertTodoMark();
         });
 
       // 插入图片
-      SymbolGlyph($r('sys.symbol.picture_fill'))
-        .fontSize(20)
-        .fontColor([$r('sys.color.font_primary')])
+      Image($r('app.media.picture_fill'))
+        .width(22)
+        .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
           this.controller.insertImage(this.getUIContext());
         });
 
       // 插入文件附件（行内 chip）
       Image($r('app.media.ic_attach'))
-        .width(20)
-        .height(20)
+        .width(22)
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
           // 外层箭头是"工厂"（请求时调一次、带数据），内层箭头才是 CustomBuilder
@@ -204,15 +242,6 @@ export struct MemoEditorArea {
               this.fileChip(info);
             };
           });
-        });
-
-      // 插入待办勾选框（插到当前段落开头）
-      Image($r('app.media.circle'))
-        .width(20)
-        .height(20)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          this.controller.insertTodoMark();
         });
     }
     .padding(12)
@@ -294,9 +323,6 @@ export struct MemoEditorArea {
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
               this.saveStatusChange(false);
-              if (!editStatus) {
-                this.controller.showToolBarIndex = 0;
-              }
             })
             // 撤销/重做的捕获入口：变更【前】在此把两侧内容一次取齐（详见 onWillChange 的注释）
             .onWillChange((value: RichEditorChangeValue) => {
@@ -323,11 +349,6 @@ export struct MemoEditorArea {
 
       Column() {
         if (!this.isMemoSaved) {
-          if (this.controller.showToolBarIndex === 1) {
-            this.fontStyleBar();
-          } else if (this.controller.showToolBarIndex === 2) {
-            this.paragraphAlignBar();
-          }
           this.editorToolBar();
         }
       }

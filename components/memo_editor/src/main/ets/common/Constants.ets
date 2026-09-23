@@ -9,5 +9,4 @@ export const DEFAULT_FONT_SIZE = 14;
 
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =
-  [$r('sys.color.font_primary'), '#FF774342', '#FFFFF200', '#FFFF7F27', '#FFED1C24',
-    '#FFEF88BE', '#FFA349A4', '#FF00A2E8', '#FF22B14C', '#FF888888'];
+  [$r('sys.color.font_primary'), '#FFFFF200', '#FFFF7F27', '#FFED1C24', '#FFA349A4', '#FF00A2E8', '#FF22B14C'];
