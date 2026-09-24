@@ -190,7 +190,7 @@ export struct MemoEditorArea {
       alignItems: ItemAlign.Center,
     }) {
       // 字体样式
-      Image($r('app.media.font_color_size'))
+      Image($r('app.media.text_style'))
         .width(20)
         .fillColor(COLOR_LIST[this.controller.colorIdx])
         .onClick(() => {
@@ -214,6 +214,14 @@ export struct MemoEditorArea {
             });
         });
 
+      // 手写功能
+      Image($r('app.media.square_and_pencil'))
+        .width(22)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          // todo
+        });
+
       // 插入待办勾选框（插到当前段落开头）
       Image($r('app.media.checkmark_circle'))
         .width(22)
@@ -223,7 +231,7 @@ export struct MemoEditorArea {
         });
 
       // 插入图片
-      Image($r('app.media.picture_fill'))
+      Image($r('app.media.picture'))
         .width(22)
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
@@ -242,6 +250,14 @@ export struct MemoEditorArea {
               this.fileChip(info);
             };
           });
+        });
+
+      // 音频录制
+      Image($r('app.media.record_circle'))
+        .width(22)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          // todo
         });
     }
     .padding(12)
