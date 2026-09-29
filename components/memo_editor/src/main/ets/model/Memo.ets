@@ -28,6 +28,19 @@ export const IMAGE_DIR_NAME = 'memo_images';
 export const ATTACHMENT_DIR_NAME = 'memo_files';
 
 /**
+ * 手写笔迹存放的子目录名（相对于 filesDir）。
+ *
+ * 里面存的是 Penkit `HandwriteController.save()` 写出的**私有格式**文件，
+ * 不是图片 —— 格式内容不透明，我们只负责搬运和回收，不解析。
+ * 好处是**可以再次编辑**（load 回画布即可），代价是拿不到缩略图，
+ * 所以列表/长按预览目前看不到笔迹。
+ *
+ * 生命周期与 IMAGE_DIR_NAME 一致：白名单式回收，
+ * 由 MemoService.reclaimOrphanInk 删除不再被任何备忘引用的文件。
+ */
+export const INK_DIR_NAME = 'memo_ink';
+
+/**
  * 常见后缀 → MIME 的本地表。
  *
  * 有了它就不必为常见类型走一次系统查询，也避开 UTD 对未知后缀回落成"灵活类型"
@@ -135,6 +148,16 @@ export function resolveAttachmentPath(uiContext: UIContext, relativePath: string
     return '';
   }
   return `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${relativePath}`;
+}
+
+/** 手写笔迹文件名 → 绝对路径（沙箱内）。与图片、附件同一口径：存档只留文件名 */
+export function resolveInkPath(uiContext: UIContext, fileName: string): string {
+  const context = uiContext.getHostContext();
+  if (context === undefined) {
+    console.error(`[ink] 取不到 host context，无法解析笔迹路径: ${fileName}`);
+    return '';
+  }
+  return `${context.filesDir}/${INK_DIR_NAME}/${fileName}`;
 }
 
 // 图片最长边上限（px）。解码时按此降采样，同时降低编码耗时、文件体积与内存占用。
@@ -441,6 +464,13 @@ export class Memo {
   updateTime: string = '';
   categoryId: string = '-1';
   memoBlockArr: Array<MemoBlock> = [];
+  /**
+   * 手写笔迹的文件名（不含目录），空串表示这条备忘没有笔迹。
+   *
+   * ⚠️ 和图片不同，这个文件名**只在第一次存笔迹时生成、之后一直复用** ——
+   * `save()` 是覆盖写，复用同一个名字就不会像图片那样每次保存都堆一份新文件。
+   */
+  inkFile: string = '';
 
   constructor(title?: string, categoryId?: string) {
     this.title = title || '';
@@ -643,6 +673,16 @@ export class Memo {
    * 注意收的是 `memo_files` 下**一级目录 + 文件名**的相对路径，不是裸文件名 ——
    * 附件副本是两级结构（见 ATTACHMENT_DIR_NAME）
    */
+  /**
+   * 收集本备忘引用的手写笔迹文件名（供孤儿回收使用）
+   * 与收集图片文件名同一口径：只收文件名，回收时按白名单比对
+   */
+  collectInkFileNames(into: Set<string>) {
+    if (this.inkFile) {
+      into.add(this.inkFile);
+    }
+  }
+
   collectAttachmentPaths(into: Set<string>) {
     for (const block of this.memoBlockArr) {
       if (block.type === 'builder' && block.value) {

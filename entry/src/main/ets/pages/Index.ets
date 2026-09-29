@@ -215,6 +215,8 @@ struct Index {
       // 附件副本同样走白名单式回收。⚠️ 不能再"启动时整个清空" ——
       // 附件已经持久化了，那样会把正在用的副本一起删掉
       this.memoService.reclaimOrphanAttachments(this.uiContext);
+      // 手写笔迹同理：白名单式回收，按 Memo.inkFile 比对
+      this.memoService.reclaimOrphanInk(this.uiContext);
     }, 0);
   }
 

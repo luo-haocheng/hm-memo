@@ -3,6 +3,8 @@ export {
   MemoBlock,
   IMAGE_DIR_NAME,
   ATTACHMENT_DIR_NAME,
+  INK_DIR_NAME,
+  resolveInkPath,
   removeDirRecursively
 } from './src/main/ets/model/Memo';
 

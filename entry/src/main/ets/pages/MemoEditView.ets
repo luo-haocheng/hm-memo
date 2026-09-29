@@ -1,6 +1,7 @@
-import { Memo, MemoEditorArea, MemoEditorController } from 'memo_editor';
+import { Memo, MemoEditorArea, MemoEditorController, resolveInkPath } from 'memo_editor';
 import { KVStore, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
+import { util } from '@kit.ArkTS';
 
 @Builder
 export function MemoEditBuilder() {
@@ -104,6 +105,9 @@ struct MemoEditView {
       this.editorController.attachmentPathsInOrder());
     this.currentMemo.description = contentStr;
     this.currentMemo.title = this.memoTitle;
+    // 手写笔迹与正文分开存一个文件，文件名记在 Memo.inkFile 上。
+    // 必须放在持久化之前 —— inkFile 是这次要写进 KV 的一部分
+    await this.saveInk();
 
     if (this.isEditMemo) {
       this.memoService.updateMemo(this.currentMemo, this.kvStore, this.uiContext);
@@ -113,6 +117,26 @@ struct MemoEditView {
     }
 
     return true;
+  }
+
+  /**
+   * 保存手写笔迹。
+   *
+   * 【为什么文件名要复用】`save()` 是**覆盖写**，复用同一个文件名就不会像图片那样
+   * 每次保存都堆一份新文件。只有第一次（还没有文件名时）才生成一个。
+   *
+   * 【空画布】`saveInk` 返回 false 时**不保留文件名**。这同时覆盖了两种情况：
+   *   - 从来没画过 → `inkFile` 保持空，不留空文件
+   *   - 原本有笔迹、这次被擦光了 → `inkFile` 清空，旧文件变成孤儿，下次启动回收掉
+   */
+  private async saveInk(): Promise<void> {
+    const name = this.currentMemo.inkFile || `${util.generateRandomUUID()}.ink`;
+    const path = resolveInkPath(this.uiContext, name);
+    if (path === '') {
+      return;
+    }
+    const saved = await this.editorController.saveInk(path);
+    this.currentMemo.inkFile = saved ? name : '';
   }
 
   build() {

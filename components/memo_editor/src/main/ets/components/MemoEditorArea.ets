@@ -2,9 +2,10 @@ import { COLOR_LIST, HANDWRITE_CLIP_MARGIN, HANDWRITE_TOOLBAR_HEIGHT } from '../
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { FileChipInfo } from '../model/FileChipInfo';
-import { Memo } from '../model/Memo';
+import { Memo, resolveInkPath } from '../model/Memo';
 import { FileChip } from './FileChip';
 import { HandwriteComponent, PenType } from '@kit.Penkit';
+import { fileIo } from '@kit.CoreFileKit';
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -300,6 +301,35 @@ export struct MemoEditorArea {
    * 外观定义在 `FileChip` 组件里（首页长按预览复用同一份，避免两处外观漂移），
    * 这里只负责把它接上「点击用系统应用打开」。
    */
+  /**
+   * 把本条备忘的笔迹交给控制器去加载。
+   *
+   * 放在 RichEditor 的 `onReady` 里、紧挨着 `rebuildContent` —— 那里能确定
+   * `editingMemo` 已经是对的那一条（正文重建本来就依赖它）。
+   * 画布是否已就绪由控制器内部兜着，见 `requestInkLoad` 的注释。
+   */
+  private requestInkLoad() {
+    const fileName = this.editingMemo.inkFile;
+    if (!fileName) {
+      return; // 没有笔迹，正常
+    }
+    const path = resolveInkPath(this.getUIContext(), fileName);
+    if (path === '') {
+      return;
+    }
+    try {
+      if (!fileIo.accessSync(path)) {
+        // 副本可能已被孤儿回收删掉。跳过即可，不要报错刷屏
+        console.error(`[ink] 笔迹文件不存在，跳过加载: ${fileName}`);
+        return;
+      }
+    } catch (error) {
+      console.error(`[ink] 检查笔迹文件失败: ${fileName}. Cause: ${JSON.stringify(error)}`);
+      return;
+    }
+    this.controller.requestInkLoad(path);
+  }
+
   @Builder
   fileChip(info: FileChipInfo) {
     FileChip({
@@ -403,6 +433,8 @@ export struct MemoEditorArea {
               // 所以重建完必须把「第 k 个 chip ↔ 第 k 个附件块」的对应关系交给控制器，
               // 否则保存时无从知道每一格是哪个文件
               this.controller.resetAttachments(this.editingMemo.memoBlockArr);
+              // 恢复手写笔迹。放在这里是因为此刻 editingMemo 一定是对的那一条
+              this.requestInkLoad();
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
@@ -467,6 +499,11 @@ export struct MemoEditorArea {
             handwriteController: this.controller.handwriteController,
             defaultPenType: PenType.BALLPOINT_PEN,
             scaleDisabled: true,
+            // 画布初始化完成的信号。`load` 必须等这一刻（官方要求），
+            // 所以笔迹恢复由这里的置位去触发，见 controller.requestInkLoad
+            onInit: () => {
+              this.controller.onInkCanvasReady();
+            },
           })
             .width('100%')
             // ⚠️ 必须是**基准高度**，不能写 '100%' ——

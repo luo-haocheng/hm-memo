@@ -284,6 +284,11 @@ export class MemoEditorController {
   titleController: TextInputController = new TextInputController();
   contentController: RichEditorController = new RichEditorController();
   handwriteController: HandwriteController = new HandwriteController();
+  // 笔迹画布是否已初始化完成（组件的 onInit 回调里置位）。
+  // `load` 必须等它 —— 官方要求"画布初始化完成后才可加载"，抢跑会出现空白
+  private inkCanvasReady: boolean = false;
+  // 待加载的笔迹路径。画布尚未就绪时先存这里，就绪后立刻加载
+  private pendingInkPath: string = '';
   // 当前文本颜色
   @Trace colorIdx: number = 0;
   // 当前文本是否加粗
@@ -1267,6 +1272,119 @@ export class MemoEditorController {
     this.isHandWrite = !this.isHandWrite;
   }
 
+  // ==================== 笔迹持久化 ====================
+
+  /**
+   * 把画布上的笔迹写入文件。
+   *
+   * @returns 是否**真的写出了文件**。调用方据此决定要不要给 `Memo.inkFile` 赋值
+   *
+   * 【为什么无条件尝试 save，而不是先判空】
+   * 曾经用 `getContentRange()` 做前置判空，真机上导致**笔迹一个都没存下来** ——
+   * 那个 API 在"有笔迹"时到底返回什么我们从未验证过，拿它守主链路等于赌。
+   * 现在改成**让 `save()` 自己当权威**：成功就是有笔迹，抛异常就当空画布。
+   * 代价是空画布若也能保存成功、会多出一个空文件 —— 比漏掉真笔迹轻得多。
+   *
+   * ⚠️ 必须**先建目录**：`save()` 不会替我们创建 `memo_ink/`，
+   *    目录不存在时它直接失败（1010400002）。这一点图片那边踩过同样的坑
+   *（见 Memo.savePixelMapToFile）。
+   */
+  async saveInk(path: string): Promise<boolean> {
+    if (path === '') {
+      console.error('[ink] 路径为空，跳过保存笔迹');
+      return false;
+    }
+    const dir = path.substring(0, path.lastIndexOf('/'));
+    try {
+      if (!fileIo.accessSync(dir)) {
+        fileIo.mkdirSync(dir, true);
+      }
+    } catch (error) {
+      console.error(`[ink] 创建笔迹目录失败: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return false;
+    }
+
+    try {
+      await this.handwriteController.save(path);
+      let size = -1;
+      try {
+        size = fileIo.statSync(path).size;
+      } catch (error) {
+        // 拿不到大小不影响结论，文件已经写出来了
+      }
+      console.info(`[ink] 笔迹已保存: ${path} (${size} bytes)`);
+      return true;
+    } catch (error) {
+      // 空画布很可能直接抛 1010400002 —— 当作"没有笔迹"，不保留文件名
+      console.info(`[ink] save() 未成功，按"没有笔迹"处理: ${path}. Cause: ${JSON.stringify(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * 从文件恢复笔迹。
+   *
+   * ⚠️ **必须在画布初始化完成之后调用** —— 挂在组件的 `onInit` 回调里。
+   * 官方文档明确要求"此时才可调用接口加载和显示笔记内容"，页面一进来就 load 会出现空白。
+   * 调用方负责先确认文件存在。
+   */
+  /**
+   * 画布初始化完成 —— 挂给组件的 `onInit`。
+   * 只置位并尝试加载，本身不判断"该不该加载"（那由 requestInkLoad 提供）
+   */
+  onInkCanvasReady() {
+    this.inkCanvasReady = true;
+    this.tryLoadInk();
+  }
+
+  /**
+   * 请求加载笔迹。**画布没就绪就先记下**，等它就绪再加载。
+   *
+   * 【为什么要这一层】"知道该加载哪个文件"和"画布能接受 load 了"是**两个不同时刻**，
+   * 而且先后顺序不确定：编辑页的 onReady（拿得到备忘、从而知道文件名）与画布组件的
+   * onInit（画布就绪）谁先谁后，声明里看不出来。与其赌顺序，不如两边都通知一次、谁后到谁触发。
+   */
+  requestInkLoad(path: string) {
+    if (path === '') {
+      return;
+    }
+    this.pendingInkPath = path;
+    this.tryLoadInk();
+  }
+
+  private tryLoadInk() {
+    if (!this.inkCanvasReady || this.pendingInkPath === '') {
+      return;
+    }
+    const path = this.pendingInkPath;
+    this.pendingInkPath = '';
+    this.loadInk(path);
+  }
+
+  loadInk(path: string) {
+    if (path === '') {
+      return;
+    }
+    try {
+      // 加载完成信号。目前只用来记日志，确认这条路真的走通了
+      this.handwriteController.onLoad((err: BusinessError, pageId: string) => {
+        if (err) {
+          console.error(`[ink] 笔迹加载回调报错: ${JSON.stringify(err)}`);
+        } else {
+          console.info(`[ink] 笔迹加载完成: ${path}, pageId=${pageId}`);
+        }
+      });
+      this.handwriteController.load(path);
+    } catch (error) {
+      console.error(`[ink] 加载笔迹失败: ${path}. Cause: ${JSON.stringify(error)}`);
+    }
+  }
+
+  // hasInk() 已删除：它用未验证的 getContentRange() 去守主链路，真机上导致笔迹没存下来。
+  // 现在由 save() 的成功与否自己判断，见 saveInk 的注释。
+  // 真机已验证：空画布上 save() 会失败（所以没画过的备忘不会产生文件）。
+  // 项目里已不再使用 getContentRange()。
+
   /**
    * 设置文本样式
    */
@@ -1658,6 +1776,9 @@ export class MemoEditorController {
     this.isHandWrite = false;
     this.alignStyle = TextAlign.Start;
     this.handwriteController = new HandwriteController();
+    // 换了新的 handwriteController，上一页的就绪状态与待加载路径一律作废
+    this.inkCanvasReady = false;
+    this.pendingInkPath = '';
   }
 
   private async selectPhoto(): Promise<Array<string> | undefined> {

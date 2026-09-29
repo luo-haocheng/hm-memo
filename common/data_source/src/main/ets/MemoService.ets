@@ -1,4 +1,4 @@
-import { ATTACHMENT_DIR_NAME, IMAGE_DIR_NAME, Memo, removeDirRecursively } from 'memo_editor';
+import { ATTACHMENT_DIR_NAME, IMAGE_DIR_NAME, INK_DIR_NAME, Memo, removeDirRecursively } from 'memo_editor';
 import { KVStore } from 'data_source';
 import { CategoryService } from './CategoryService';
 import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
@@ -248,6 +248,81 @@ export class MemoService {
       removedCount++;
     }
     console.info(`[reclaim] orphan attachment dirs ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
+      + `${removedCount}, kept: ${referenced.size}.`);
+  }
+
+  /**
+   * 回收孤儿笔迹：删除 memo_ink 下不再被任何备忘（含回收站）引用的文件。
+   *
+   * 与 reclaimOrphanImages 完全同构（单级目录、白名单式、只认引用名），
+   * 差别只有两点：目录不同，以及回收依据是 `Memo.inkFile` 而不是 `MemoBlock`。
+   *
+   * 安全约束同上：isFullyLoaded 前置、先收集全部引用再遍历删除、
+   * 认不出的条目一律不动、内部不抛异常（可由调用方 fire-and-forget）。
+   *
+   * ⚠️ 不做扩展名白名单：笔迹是 Penkit 的私有格式，文件名由我们生成、没有固定后缀，
+   *    所以**只能靠"不在白名单里就删"来判**。这意味着**目录里不能放别的东西**。
+   */
+  public reclaimOrphanInk(uiContext: UIContext) {
+    if (!this.isFullyLoaded) {
+      console.info('Skip reclaiming orphan ink: memos are not fully loaded.');
+      return;
+    }
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('Failed to reclaim orphan ink: host context is unavailable.');
+      return;
+    }
+    const dir = `${context.filesDir}/${INK_DIR_NAME}`;
+    try {
+      if (!fileIo.accessSync(dir)) {
+        return; // 从未存过笔迹，属于正常情况
+      }
+    } catch (error) {
+      console.info(`Failed to access ink dir: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 1. 白名单：收集所有被引用的文件名（有效备忘 + 回收站）
+    const referenced = new Set<string>();
+    for (const memo of this.memoList) {
+      memo.collectInkFileNames(referenced);
+    }
+    for (const memo of this.dumpsters) {
+      memo.collectInkFileNames(referenced);
+    }
+
+    // 2. 扫描目录并逐个比对
+    let fileNames: string[] = [];
+    try {
+      fileNames = fileIo.listFileSync(dir);
+    } catch (error) {
+      console.error(`Failed to list ink dir: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    let removedCount = 0;
+    for (const rawName of fileNames) {
+      const fileName = rawName.substring(rawName.lastIndexOf('/') + 1);
+      if (referenced.has(fileName)) {
+        continue;
+      }
+      const path = `${dir}/${fileName}`;
+      try {
+        const size = fileIo.statSync(path).size;
+        if (RECLAIM_DRY_RUN) {
+          console.info(`[reclaim] would remove orphan ink: ${fileName} (${size} bytes)`);
+        } else {
+          fileIo.unlinkSync(path);
+          console.info(`[reclaim] removed orphan ink: ${fileName} (${size} bytes)`);
+        }
+        removedCount++;
+      } catch (error) {
+        // 删不掉最多留个孤儿，下次回收再试
+        console.error(`Failed to remove orphan ink: ${path}. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+    console.info(`[reclaim] orphan ink ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
       + `${removedCount}, kept: ${referenced.size}.`);
   }
 
@@ -513,6 +588,8 @@ export class MemoService {
     memo.description = serializedMemo.description;
     // 兼容历史数据：Span 迁移前的记录没有 memoBlockArr 字段，缺失或非法时回落为空数组
     memo.memoBlockArr = Array.isArray(serializedMemo.memoBlockArr) ? serializedMemo.memoBlockArr : [];
+    // 兼容历史数据：加笔迹之前的记录没有 inkFile 字段
+    memo.inkFile = serializedMemo.inkFile ?? '';
     return memo;
   }
 }
