@@ -23,6 +23,7 @@ import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
 import { display } from '@kit.ArkUI';
 import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
+import { HandwriteController } from '@kit.Penkit';
 
 // 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
 const FILE_IMAGE_BORDER_RADIUS = 12;
@@ -282,6 +283,7 @@ export class MemoEditorController {
 
   titleController: TextInputController = new TextInputController();
   contentController: RichEditorController = new RichEditorController();
+  handwriteController: HandwriteController = new HandwriteController();
   // 当前文本颜色
   @Trace colorIdx: number = 0;
   // 当前文本是否加粗
@@ -290,6 +292,8 @@ export class MemoEditorController {
   @Trace isItalics: boolean = false;
   // 当前文本是否下划线
   @Trace isUnderline: boolean = false;
+  // 是否手写输入
+  @Trace isHandWrite: boolean = false;
   // 当前字体大小
   @Trace fontSize: number = DEFAULT_FONT_SIZE;
   // 当前段落对齐样式
@@ -1241,6 +1245,29 @@ export class MemoEditorController {
   }
 
   /**
+   * 切换「手写画布 / 键盘输入」。
+   *
+   * 【切进手写前必须 stopEditing】只把输入框的 `focusable` 置 false **不会**让
+   * 已经获焦的输入框失焦 —— 软键盘会继续停在屏幕上盖住画布，得显式收起来。
+   * 反过来切回键盘时**不主动唤起**输入法：让用户自己点，免得平白弹一次键盘。
+   *
+   * 笔迹本身不在这里管：它由 handwriteController 持有，两个模式切来切去不会丢
+   *（画布组件常驻，只切显隐）。⚠️ 但**退出编辑页就没了** —— 目前没有持久化。
+   */
+  toggleHandWrite() {
+    if (!this.isHandWrite) {
+      try {
+        this.titleController.stopEditing();
+        this.contentController.stopEditing();
+      } catch (error) {
+        // 收起输入法失败不该拦住模式切换，记日志继续
+        console.error(`Failed to stop editing when switching to handwrite. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+    this.isHandWrite = !this.isHandWrite;
+  }
+
+  /**
    * 设置文本样式
    */
   updateTextStyle(textStyle: RichEditorTextStyle) {
@@ -1628,7 +1655,9 @@ export class MemoEditorController {
     this.isBold = false;
     this.isItalics = false;
     this.isUnderline = false;
+    this.isHandWrite = false;
     this.alignStyle = TextAlign.Start;
+    this.handwriteController = new HandwriteController();
   }
 
   private async selectPhoto(): Promise<Array<string> | undefined> {

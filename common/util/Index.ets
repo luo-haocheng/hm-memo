@@ -1,1 +1,1 @@
-export { MainPage } from './src/main/ets/components/MainPage';
+export { GlobalContext } from './src/main/ets/GlobalContext'

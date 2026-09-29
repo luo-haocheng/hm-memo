@@ -4,6 +4,7 @@
   "dependencies": {
     "memo_editor": "file:./components/memo_editor",
     "data_source": "file:./common/data_source",
+    "util": "file:./common/util"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.25",
