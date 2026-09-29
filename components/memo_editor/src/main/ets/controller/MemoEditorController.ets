@@ -1338,6 +1338,21 @@ export class MemoEditorController {
   }
 
   /**
+   * 把画布内部的长画布滚动到指定偏移（vp），供"正文滚动 → 笔迹跟随"使用。
+   *
+   * 真机已验证：`scrollTo` 滚的是**画布内容**，工具栏停在屏幕底部不动 ——
+   * 这正是这条路能成立的前提（若工具栏会跟着滚走，这个方案直接作废）。
+   * 另一半（画布滚动 → 编辑器跟随）在 MemoEditorArea.syncEditorToInk 里。
+   */
+  scrollInkTo(yOffset: number) {
+    try {
+      this.handwriteController.scrollTo(yOffset);
+    } catch (error) {
+      console.error(`[ink] 同步画布滚动失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  /**
    * 请求加载笔迹。**画布没就绪就先记下**，等它就绪再加载。
    *
    * 【为什么要这一层】"知道该加载哪个文件"和"画布能接受 load 了"是**两个不同时刻**，

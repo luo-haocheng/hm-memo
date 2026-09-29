@@ -7,9 +7,21 @@ import { FileChip } from './FileChip';
 import { HandwriteComponent, PenType } from '@kit.Penkit';
 import { fileIo } from '@kit.CoreFileKit';
 
+/**
+ * 滚动同步的收敛容差（vp）。
+ *
+ * 画布的 `scrollTo` 会把偏移**取整**（实测：编辑器 5.333 → 画布 5），
+ * 所以两边永远差着零点几 vp。防回环**不能用"相等才忽略"**，否则会来回震荡；
+ * 用差值判断才能收敛 —— 差值落进容差内，谁也不再驱动谁
+ */
+const SCROLL_SYNC_TOLERANCE = 1;
+
 @ComponentV2
 export struct MemoEditorArea {
   @Local isEditing: boolean = false;
+  // 编辑层 Scroll 的**内容高度**。用来决定画布的长画布上限 ——
+  // 画布必须至少能滚到和正文一样远，否则正文滚到底时笔迹跟不上
+  @Local scrollContentHeight: number = 0;
   // 编辑区**当前**可用高度（vp）。会随软键盘变化，只用来给裁剪窗口封顶
   @Local editorAreaHeight: number = 0;
   // 画布基准高度：`editorAreaHeight` 见过的**最大值**。
@@ -30,6 +42,11 @@ export struct MemoEditorArea {
   };
   private controller: MemoEditorController = MemoEditorController.instance;
   private styleDialogId = -1;
+  // 编辑层 Scroll 的控制器。滚动同步要靠它读绝对偏移（onDidScroll 只给增量）
+  private editorScroller: Scroller = new Scroller();
+  // 防回环：本端驱动对端时，对端的回调不能再反过来驱动本端。
+  // 与项目里 isRestoring / isRepairing 同一套路数
+  private isSyncingScroll: boolean = false;
 
   @Builder
   styleDialog() {
@@ -341,6 +358,45 @@ export struct MemoEditorArea {
   }
 
   /**
+   * 手写画布的长画布上限（vp）。
+   *
+   * 取**正文内容高度**：画布必须至少能滚到和正文一样远，否则正文滚到底时笔迹跟不上、
+   * 两者在底部错位。正文比视口矮时取视口高，等于不滚。
+   *
+   * ⚠️ 可以放心让它随内容变化：真机实测过**画布的坐标空间与 `maxCanvasHeight` 无关** ——
+   *    在 `maxCanvasHeight` 引入之前画的笔迹，带着新值打开时尺寸完全正常。
+   */
+  private handwriteMaxCanvasHeight(): number {
+    const viewport = this.canvasBaseHeight > 0 ? this.canvasBaseHeight : 1000;
+    return Math.max(this.scrollContentHeight, viewport);
+  }
+
+  /**
+   * 画布自己滚动时，把编辑器拉过来对齐。
+   *
+   * 【为什么要反向】手写模式下画布在上层，滚动手势落在**画布**上，编辑器不会自己动 ——
+   * 不反向同步的话，笔迹滚了、正文没动，两者立刻错位。
+   *
+   * 【防回环靠的是"按模式收口"，不是容差】
+   * 两个模式**互斥**，每种模式里驱动方只有一个，所以把两个回调各自按模式闸住就没有回路：
+   *   - 键盘模式：画布 `.enabled(false)`，用户滚不动它 → 只有编辑器能驱动
+   *   - 手写模式：画布盖住编辑器 → 手势落不到编辑器上 → 只有画布能驱动
+   *（调用点在 build 里，两边各有一道 `isHandWrite` 判断）
+   *
+   * ⚠️ **曾经想用"差值容差"兜底，真机上快速滚动会抖动**：编辑器已经滚到 12、
+   * 画布的回调这时才报上一帧的 10，|10-12|=2 超过容差 → 被判定成"画布自己动了" →
+   * 把编辑器拽回 10。下一帧又往前，来回抖。差的是**一帧的时间差**，容差挡不住。
+   * 所以容差现在只用来避免重复调用，不再承担防回环的职责。
+   */
+  private syncEditorToInk(inkOffset: number) {
+    const editorOffset = this.editorScroller.currentOffset().yOffset;
+    if (Math.abs(inkOffset - editorOffset) <= SCROLL_SYNC_TOLERANCE) {
+      return; // 已对齐，不再驱动，避免震荡
+    }
+    this.editorScroller.scrollTo({ xOffset: 0, yOffset: inkOffset });
+  }
+
+  /**
    * 手写画布**裁剪容器**的高度。
    *
    * 键盘模式下比编辑区矮一个 `HANDWRITE_TOOLBAR_HEIGHT` —— 画布组件本身仍按整屏高布局，
@@ -380,7 +436,7 @@ export struct MemoEditorArea {
 
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
-      Scroll() {
+      Scroll(this.editorScroller) {
         Column() {
           TextInput({
             placeholder: '标题',
@@ -455,7 +511,14 @@ export struct MemoEditorArea {
               this.controller.onSelectionChange(range);
             });
         }
-        .width('100%');
+        .width('100%')
+        // 量出正文内容高度，供画布的长画布上限使用（见 handwriteMaxCanvasHeight）
+        .onAreaChange((_oldArea: Area, newArea: Area) => {
+          const height = newArea.height as number;
+          if (height > 0) {
+            this.scrollContentHeight = height;
+          }
+        });
       }
       .width('100%')
       .height('100%')
@@ -465,7 +528,18 @@ export struct MemoEditorArea {
       // 这里刻意**不设底色**：这行原是"画布压在编辑层下面时用来挡住它"的，
       // 现在画布永远在上层，它已无作用 —— 反而可能在原生 surface 旁露出来、
       // 与页面底色对不上而显出一条色带
-      .zIndex(0);
+      .zIndex(0)
+      // 正文滚动 → 画布跟着滚。
+      // 用 currentOffset() 而不是回调参数 —— onDidScroll 给的是**增量**，不是绝对位置
+      .onDidScroll(() => {
+        // ⚠️ **只在键盘模式下驱动画布**。手写模式下画布盖住了这一层，用户滚不到编辑器，
+        // 这里的事件只可能是我们同步过去产生的**回声** —— 再拿它去驱动画布就会来回打架。
+        // 两个模式互斥（见 syncEditorToInk 的注释），所以这一道闸就是回路的断点
+        if (this.controller.isHandWrite) {
+          return;
+        }
+        this.controller.scrollInkTo(this.editorScroller.currentOffset().yOffset);
+      });
 
       // 手写画布层：**永远浮在编辑层之上**，两种模式都显示笔迹 ——
       // 键盘模式下就是"批注盖在正文上"的效果（画布除笔迹外是透明的，正文透得出来）。
@@ -503,6 +577,16 @@ export struct MemoEditorArea {
             // 所以笔迹恢复由这里的置位去触发，见 controller.requestInkLoad
             onInit: () => {
               this.controller.onInkCanvasReady();
+            },
+            // 长画布上限：至少要有正文那么长，否则正文滚到底时画布跟不上
+            maxCanvasHeight: this.handwriteMaxCanvasHeight(),
+            // 画布自己滚动 → 把编辑器拉过来对齐。
+            // 同样按模式收口：键盘模式下画布被禁用、不可能被用户滚，报回来的只可能是回声
+            onDidScroll: (yOffset: number) => {
+              if (!this.controller.isHandWrite) {
+                return;
+              }
+              this.syncEditorToInk(yOffset);
             },
           })
             .width('100%')
