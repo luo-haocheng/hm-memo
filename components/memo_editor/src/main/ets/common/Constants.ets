@@ -85,6 +85,16 @@ export const PLAYBACK_STOP_JOIN_TIMEOUT_MS = 1200;
 /** 播完最后一个字节后等 `drain()` 的上限（毫秒）。实测约 95ms 就返回 */
 export const PLAYBACK_DRAIN_TIMEOUT_MS = 1500;
 
+/**
+ * 导出 WAV 时每次读/写的块大小（字节）。
+ *
+ * 【为什么不能图省事用同步 API 一次拷完】录音可达 115MB/小时，同步拷贝会把 UI 线程
+ * 从头锁到尾（ANR），期间菜单和对话框都关不掉。所以用**异步** `fileIo.read/write`
+ * 分块拷、每块 `await` —— 让出点就落在块与块之间。
+ * 256KB 是"调用次数"与"单次内存占用"的折中（115MB 约 450 次）。
+ */
+export const EXPORT_CHUNK_BYTES = 256 * 1024;
+
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =
   [$r('sys.color.font_primary'), '#FFFFF200', '#FFFF7F27', '#FFED1C24', '#FFA349A4', '#FF00A2E8', '#FF22B14C'];

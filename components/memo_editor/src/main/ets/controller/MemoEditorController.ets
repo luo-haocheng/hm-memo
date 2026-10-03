@@ -35,6 +35,7 @@ import {
 import { HandwriteController } from '@kit.Penkit';
 import { AudioRecorder, RecorderTick } from '../recorder/AudioRecorder';
 import { PcmPlayer, PlaybackTick } from '../recorder/PcmPlayer';
+import { exportPcmAsWav, timestampWavName } from '../recorder/WavExporter';
 
 // 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
 const FILE_IMAGE_BORDER_RADIUS = 12;
@@ -362,6 +363,8 @@ export class MemoEditorController {
   private playSession: number = 0;
   /** 当前备忘的录音文件绝对路径（空串表示没有）。进页面时由 preparePlayback 设置 */
   private playbackPath: string = '';
+  /** 正在导出。防连点弹出两个系统文件保存页 */
+  private isExporting: boolean = false;
   // 用户操作记录历史。非 @Trace —— 避免大对象被 V2 观察机制包裹，UI 只看下标与长度
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
@@ -1618,6 +1621,112 @@ export class MemoEditorController {
     if (this.playbackDurationMs > 0) {
       this.playbackPositionMs = Math.max(0, Math.min(positionMs, this.playbackDurationMs));
     }
+  }
+
+  // ==================== 录音的导出与删除 ====================
+
+  /**
+   * 把当前备忘的录音导出成 **WAV** 存到用户选定的位置。
+   *
+   * 【为什么不用先停播放】`PcmPlayer` 持有的是它自己那个 `READ_ONLY` fd，
+   * 导出再开一个**独立的**只读 fd，两个只读描述符在同一 inode 上互不干扰。
+   * 停播反而多引入一次异步收尾的竞态。
+   *
+   * 【不做的事】不设 `DocumentSaveOptions.autoCreateEmptyFile` —— 它是 `@since 23`
+   * 且 syscap 是 `...UserFileService.FolderSelection`（2in1 专属），手机上调不到。
+   */
+  async exportRecording(uiContext: UIContext): Promise<void> {
+    if (this.isRecording || this.isStartingRecord || this.isExporting || this.playbackPath === '') {
+      return;
+    }
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('[export] 取不到 host context，无法导出');
+      return;
+    }
+
+    this.isExporting = true;
+    try {
+      const options = new picker.DocumentSaveOptions();
+      // 只设预填文件名；后缀不靠 fileSuffixChoices（有些版本会再追加一次后缀）
+      options.newFileNames = [timestampWavName()];
+      const uris = await new picker.DocumentViewPicker(context).save(options);
+      if (!uris || uris.length < 1) {
+        console.info('[export] 用户在保存页取消了');
+        return;
+      }
+      await exportPcmAsWav(this.playbackPath, uris[0]);
+      this.toast(uiContext, '已保存');
+    } catch (error) {
+      // 【取消的另一种形态】有的版本取消是**抛异常**而不是返回空数组。
+      // 所以这里只能用 info 记，不能当失败报错、更不能 toast —— 会把"取消"显示成"失败"
+      console.info(`[export] 导出结束（用户取消或失败）: ${JSON.stringify(error)}`);
+    } finally {
+      this.isExporting = false;
+    }
+  }
+
+  /**
+   * 删除当前备忘的录音文件。
+   *
+   * @returns 是否**真的删了**。调用方据此决定要不要把备忘标记成未保存
+   *
+   * 【顺序是设计出来的，不是随意的】
+   * 1. **先弹确认框、确认之后才动状态**：`playbackDurationMs = 0` 会让 `playerBar()` 消失，
+   *    而它正是那个 `bindMenu` 的**锚点** —— 先改状态会留下一个悬空的菜单。
+   *    让确认框先拿到焦点、菜单自然收起就避开了
+   * 2. `stopPlayback()` → **`player.resetPosition()`** → `unlinkSync` → 清备忘字段 →
+   *    清显示状态。中间那步不能省：`fedBytes` 不被 `stop()` 重置，不归零的话
+   *    下次录音后播放会拿着旧断点去 clamp，表现是"从末尾开始播"或"一开就结束"
+   */
+  async deleteRecording(uiContext: UIContext, memo: Memo): Promise<boolean> {
+    if (this.isRecording || this.playbackPath === '') {
+      return false;
+    }
+
+    let confirmed = false;
+    try {
+      const result = await uiContext.getPromptAction().showDialog({
+        title: '删除录音',
+        message: '删除后不可恢复，确定删除这段录音吗？',
+        // Button 的 color 是**必填**的（`text` 与 `color` 都不可省）
+        buttons: [
+          { text: '取消', color: $r('sys.color.font_primary') },
+          { text: '删除', color: $r('sys.color.warning') },
+        ],
+      });
+      // index 是**从 0 开始的数组下标**，任何非 1 的值（含关闭返回的 -1）都按取消处理
+      confirmed = result.index === 1;
+    } catch (error) {
+      // 弹框本身失败 / 被取消 → 什么都不做
+      console.info(`[record] 删除确认框未确认: ${JSON.stringify(error)}`);
+      return false;
+    }
+    if (!confirmed) {
+      return false;
+    }
+
+    this.stopPlayback();
+    this.player.resetPosition();
+
+    try {
+      fileIo.unlinkSync(this.playbackPath);
+      console.info(`[record] 已删除录音文件: ${this.playbackPath}`);
+    } catch (error) {
+      // 文件不存在（可能已被孤儿回收删掉、或连点了两次）按**成功**处理，
+      // 不能因为删不到就跳过后面的状态清理
+      console.info(`[record] 删除录音文件时未找到或失败，按已删除处理: ${JSON.stringify(error)}`);
+    }
+
+    memo.audioFile = '';
+    // 仅本次会话有效的标记：让"只有录音"的备忘在删完之后还能被保存
+    //（否则空判据会拦住 saveMemo，删除写不进存档）
+    memo.audioRemoved = true;
+
+    this.playbackPath = '';
+    this.playbackDurationMs = 0;
+    this.playbackPositionMs = 0;
+    return true;
   }
 
   // ==================== 笔迹持久化 ====================

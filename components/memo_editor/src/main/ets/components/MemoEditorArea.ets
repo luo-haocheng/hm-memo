@@ -515,13 +515,26 @@ export struct MemoEditorArea {
           {
             value: '保存',
             action: () => {
-              // todo
+              // 导出成 WAV 存到用户选定的位置（与工具栏那个"保存备忘"不是一回事）
+              this.controller.exportRecording(this.getUIContext())
+                .catch((error: BusinessError) => {
+                  console.error(`[export] 导出时未捕获的异常: ${JSON.stringify(error)}`);
+                });
             }
           },
           {
             value: '删除',
             action: () => {
-              // todo
+              this.controller.deleteRecording(this.getUIContext(), this.editingMemo)
+                .then((deleted: boolean) => {
+                  if (deleted) {
+                    // 标记成未保存，工具栏才会浮出保存勾号 —— 用户得知道要去保存
+                    this.saveStatusChange(false);
+                  }
+                })
+                .catch((error: BusinessError) => {
+                  console.error(`[record] 删除录音时未捕获的异常: ${JSON.stringify(error)}`);
+                });
             }
           }
         ]);

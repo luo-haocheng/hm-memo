@@ -514,6 +514,19 @@ export class Memo {
    */
   audioFile: string = '';
 
+  /**
+   * **仅本次会话有效**的标记：这次编辑里用户主动删过录音。
+   *
+   * 【为什么需要它】`saveMemo` 的空判据是"正文、标题、录音三者全空就不保存"。
+   * 一条**只有录音**的备忘删掉录音之后恰好三者全空 → 点保存什么都不做，
+   * 删除永远写不进存档。这个标记给空判据开一个例外。
+   *
+   * 【为什么不持久化】`constructMemo` 是逐字段赋值再从 KV 建对象，
+   * 不复制它 —— 所以**加载回来的备忘永远是 `false`**，它只在"这次会话删过"时有意义。
+   * 保存过一次之后 `audioFile` 已经是空串，标记的使命也就结束了。
+   */
+  audioRemoved: boolean = false;
+
   constructor(title?: string, categoryId?: string) {
     this.title = title || '';
     this.categoryId = categoryId || '';

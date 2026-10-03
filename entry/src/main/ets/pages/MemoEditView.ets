@@ -101,8 +101,11 @@ struct MemoEditView {
     // 【为什么笔迹不算】用户此前明确说过笔迹那条"要不要让有笔迹也算有内容，
     // 等确认实际场景" —— 也就是**有意**把笔迹排除在外。这个非对称是显式的产品决策，
     // 不是漏改，别顺手把 inkFile 也补进来。
+    // 【为什么还要看 audioRemoved】一条**只有录音**的备忘删掉录音之后三者全空，
+    // 光看上面三个条件会把这次"删除"挡在门外、写不进存档（点保存毫无反应）。
+    // 这个标记只在"本次会话主动删过录音"时为 true，加载回来的备忘永远是 false
     const hasAudio = this.currentMemo.audioFile !== '';
-    if (contentStr === '' && this.memoTitle === '' && !hasAudio) {
+    if (contentStr === '' && this.memoTitle === '' && !hasAudio && !this.currentMemo.audioRemoved) {
       return this.isEditMemo ? false : true;
     }
 
