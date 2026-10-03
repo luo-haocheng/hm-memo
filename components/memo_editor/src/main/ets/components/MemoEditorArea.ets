@@ -89,9 +89,6 @@ export struct MemoEditorArea {
   private styleDialogId = -1;
   // 编辑层 Scroll 的控制器。滚动同步要靠它读绝对偏移（onDidScroll 只给增量）
   private editorScroller: Scroller = new Scroller();
-  // 防回环：本端驱动对端时，对端的回调不能再反过来驱动本端。
-  // 与项目里 isRestoring / isRepairing 同一套路数
-  private isSyncingScroll: boolean = false;
 
   @Builder
   styleDialog() {
