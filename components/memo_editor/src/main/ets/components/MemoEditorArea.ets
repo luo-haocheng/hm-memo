@@ -1,4 +1,11 @@
-import { COLOR_LIST, HANDWRITE_CLIP_MARGIN, HANDWRITE_TOOLBAR_HEIGHT } from '../common/Constants';
+import {
+  COLOR_LIST,
+  HANDWRITE_CLIP_MARGIN,
+  HANDWRITE_TOOLBAR_HEIGHT,
+  RECORD_BAR_COUNT,
+  RECORD_BAR_MAX_HEIGHT,
+  RECORD_BAR_MIN_HEIGHT
+} from '../common/Constants';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { FileChipInfo } from '../model/FileChipInfo';
@@ -15,6 +22,37 @@ import { fileIo } from '@kit.CoreFileKit';
  * 用差值判断才能收敛 —— 差值落进容差内，谁也不再驱动谁
  */
 const SCROLL_SYNC_TOLERANCE = 1;
+
+/**
+ * 波形柱的**下标序列**。
+ *
+ * 【为什么用下标而不是直接遍历 `recordWaveform`】`ForEach` 按 key 做差量：柱子的数量
+ * 从头到尾不变，若直接遍历波形数组、key 取下标，那么"值变了但 key 没变"→ 不重建 →
+ * **柱子高度永远不会刷新**（V2 下 ForEach 的老坑）。
+ * 改成遍历这个**恒定不变**的序列、让每根柱子的 `.height()` 去读 `recordWaveform[i]`，
+ * V2 的细粒度绑定才会就地重算表达式。
+ */
+const WAVEFORM_BAR_INDICES: number[] = buildBarIndices();
+
+function buildBarIndices(): number[] {
+  const indices: number[] = [];
+  for (let i = 0; i < RECORD_BAR_COUNT; i++) {
+    indices.push(i);
+  }
+  return indices;
+}
+
+/** 录制时长 → `mm:ss` */
+function formatRecordDuration(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const mm = minutes < 10 ? `0${minutes}` : `${minutes}`;
+  const ss = seconds < 10 ? `0${seconds}` : `${seconds}`;
+  const hh = hours < 10 ? `0${hours}` : `${hours}`;
+  return `${hh}:${mm}:${ss}`;
+}
 
 @ComponentV2
 export struct MemoEditorArea {
@@ -279,12 +317,24 @@ export struct MemoEditorArea {
             });
           });
 
-        // 音频录制
+        // 音频录制。录音中变灰且不可点（需求 2）——
+        // `enabled(false)` 是"只关交互、不动渲染"的开关，与手写画布那边同一个用法
         Image($r('app.media.record_circle'))
           .width(22)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.isRecording
+            ? $r('sys.color.font_tertiary')
+            : $r('sys.color.font_primary'))
+          .opacity(this.controller.isRecording ? 0.4 : 1)
+          .enabled(!this.controller.isRecording)
           .onClick(() => {
-            // todo
+            // 与 enabled 双保险：权限申请是异步的，置位之前还能被点到
+            if (this.controller.isRecording) {
+              return;
+            }
+            this.controller.startRecord(this.getUIContext())
+              .catch((error: BusinessError) => {
+                console.error(`[record] 启动录音时未捕获的异常: ${JSON.stringify(error)}`);
+              });
           });
       }
 
@@ -345,6 +395,58 @@ export struct MemoEditorArea {
       return;
     }
     this.controller.requestInkLoad(path);
+  }
+
+  /**
+   * 录音条。从左到右三段：**停止按钮 / 音量波形 / 录制时间**。
+   *
+   * 出现在**标题与正文之间**（插入点在 build 里 TextInput 与 RichEditor 之间）。
+   */
+  @Builder
+  recordBar() {
+    Row({ space: 8 }) {
+      // 停止按钮：用形状原语画"圆底 + 红色圆角方块"，省掉为一个按钮新增 SVG 资源（也避开构建期资源索引的风险）
+      Stack() {
+        Circle({ width: 28, height: 28 })
+          .fill($r('sys.color.comp_background_secondary'));
+
+        Rect({ width: 12, height: 12 })
+          .radius(3)
+          .fill($r('sys.color.warning'));
+      }
+      .onClick(() => {
+        this.controller.stopRecord();
+      });
+
+      //  波形：居中对称柱 —— 每根柱子的**容器固定高、内容居中**，里面的柱子因此天然以中线为轴上下对称生长
+      Row({ space: 3 }) {
+        ForEach(WAVEFORM_BAR_INDICES, (index: number) => {
+          Column() {
+            Column()
+              .width(2)
+              .height(RECORD_BAR_MIN_HEIGHT
+                + (this.controller.recordWaveform[index] ?? 0) * RECORD_BAR_MAX_HEIGHT)
+              .borderRadius(1.5)
+              .backgroundColor($r('sys.color.gray_04'));
+          }
+          .height(RECORD_BAR_MIN_HEIGHT + RECORD_BAR_MAX_HEIGHT)
+          .justifyContent(FlexAlign.Center);
+        }, (index: number) => index.toString());
+      }
+      .clip(true)
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center);
+
+      // 计时
+      Text(formatRecordDuration(this.controller.recordElapsedMs) + '/' + '02:00:00')
+        .fontSize(8)
+        .fontColor($r('sys.color.font_secondary'));
+    }
+    .padding(12)
+    .margin({ left: 12, right: 12 })
+    .borderRadius(12)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('sys.color.background_secondary'));
   }
 
   @Builder
@@ -461,6 +563,11 @@ export struct MemoEditorArea {
               this.memoTitle = value;
               this.titleChange(value);
             });
+
+          // 录音条：标题与正文之间（需求 3）。只在录音期间存在
+          if (this.controller.isRecording) {
+            this.recordBar();
+          }
 
           RichEditor({ controller: this.controller.contentController })
             .width('100%')

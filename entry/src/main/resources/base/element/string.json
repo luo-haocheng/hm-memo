@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "HMMemo"
+    },
+    {
+      "name": "reason_microphone",
+      "value": "录制语音备忘"
     }
   ]
 }

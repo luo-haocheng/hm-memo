@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { GlobalContext } from 'util';
+import { MemoEditorController } from 'memo_editor';
 
 const DOMAIN = 0x0000;
 
@@ -73,5 +74,12 @@ export default class EntryAbility extends UIAbility {
   onBackground(): void {
     // Ability has back to background
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+    // 退到后台就停录音。
+    //
+    // 【为什么必须在这里停】录音状态与 AudioCapturer 都挂在进程级单例控制器上。
+    // 真机实测：切后台后系统**过一段时间会把这个应用杀掉** —— 与其让麦克风被占着
+    // 然后随进程一起消失，不如主动停掉、把释放逻辑走完整。
+    //（页面内的 `onWillDisappear` 只管"返回上一页"，不管"退到后台"，所以这里要单独兜）
+    MemoEditorController.instance.stopRecord();
   }
 };

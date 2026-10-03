@@ -15,15 +15,16 @@ import {
   toggledTodoMark
 } from '../model/Memo';
 import { util } from '@kit.ArkTS';
-import { common, Want, wantConstant } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common, Permissions, Want, wantConstant } from '@kit.AbilityKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
 import { display } from '@kit.ArkUI';
-import { COLOR_LIST, DEFAULT_FONT_SIZE } from '../common/Constants';
+import { COLOR_LIST, DEFAULT_FONT_SIZE, RECORD_BAR_COUNT, RECORD_LEVEL_DECAY } from '../common/Constants';
 import { HandwriteController } from '@kit.Penkit';
+import { AudioRecorder, RecorderTick } from '../recorder/AudioRecorder';
 
 // 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
 const FILE_IMAGE_BORDER_RADIUS = 12;
@@ -307,6 +308,21 @@ export class MemoEditorController {
   @Trace currRecordIdx: number = -1;
   // 历史长度：单独暴露给 UI，驱动重做按钮的灰显
   @Trace historyLength: number = 0;
+  // ==================== 录音 ====================
+  // 是否正在录音。驱动录音条的显隐与工具栏按钮的灰显
+  @Trace isRecording: boolean = false;
+  // 当前音量（0~1，已做峰值保持 + 衰减）。驱动波形**最新那一根**柱子的高度
+  @Trace recordLevel: number = 0;
+  // 已录时长（毫秒）。UI 格式化成 mm:ss
+  @Trace recordElapsedMs: number = 0;
+  // 波形历史：定长数组，每拍整体重新赋值（见 onRecordTick）。
+  // ⚠️ 用整体赋值而不是 push —— 不依赖 V2 对数组原地修改的观察
+  @Trace recordWaveform: number[] = [];
+  // 录音引擎。非 @Trace —— UI 不直接读它，只读上面那几个状态字段。
+  // 它是纯引擎对象（不持有组件作用域的东西），性质同 handwriteController，放在单例上是安全的
+  private audioRecorder: AudioRecorder = new AudioRecorder();
+  // 正在申请权限 / 启动录音。防"连点两次录音按钮"在 isRecording 置位之前又进来一次
+  private isStartingRecord: boolean = false;
   // 用户操作记录历史。非 @Trace —— 避免大对象被 V2 观察机制包裹，UI 只看下标与长度
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
@@ -1260,6 +1276,9 @@ export class MemoEditorController {
    *（画布组件常驻，只切显隐）。⚠️ 但**退出编辑页就没了** —— 目前没有持久化。
    */
   toggleHandWrite() {
+    // 切进手写前先停录音：手写画布是 `.enabled(true)` 且盖在编辑层之上，
+    // 不停的话录音条上的停止按钮会被画布截住、点不动
+    this.stopRecord();
     if (!this.isHandWrite) {
       try {
         this.titleController.stopEditing();
@@ -1270,6 +1289,119 @@ export class MemoEditorController {
       }
     }
     this.isHandWrite = !this.isHandWrite;
+  }
+
+  // ==================== 录音 ====================
+
+  /**
+   * 开始录音。
+   *
+   * 【权限】`SOURCE_TYPE_MIC` 必须持有 `ohos.permission.MICROPHONE`（user_grant），
+   * 所以**先申请、通过才进录音态**。用户拒绝时不进录音态、不出录音条、按钮维持可点 ——
+   * 下次再点会再申请一次（已授权时 `requestPermissionsFromUser` 不弹框、直接返回 granted）。
+   *
+   * 【context 从哪来】与 `insertImage` / `insertFile` 同一路子：`uiContext.getHostContext()`。
+   * `uiContext` 只作形参在栈上用，**绝不写进字段** —— 本类是单例，存组件作用域的东西会吊住组件。
+   */
+  async startRecord(uiContext: UIContext): Promise<void> {
+    if (this.isRecording || this.isStartingRecord) {
+      return;
+    }
+    const context = uiContext.getHostContext() as common.Context | undefined;
+    if (context === undefined) {
+      console.error('[record] 取不到 host context，无法录音');
+      return;
+    }
+
+    this.isStartingRecord = true;
+    try {
+      if (!await this.requestMicPermission(context)) {
+        this.toast(uiContext, '需要麦克风权限才能录音');
+        return;
+      }
+      // 申请权限期间用户可能又点了一次
+      if (this.isRecording) {
+        return;
+      }
+
+      // 复位显示状态，免得上一轮的波形与时长残留一闪
+      this.recordLevel = 0;
+      this.recordElapsedMs = 0;
+      this.recordWaveform = new Array<number>(RECORD_BAR_COUNT).fill(0);
+
+      await this.audioRecorder.start(
+        (tick: RecorderTick) => {
+          this.onRecordTick(tick);
+        },
+        () => {
+          // 系统打断（来电 / 被其他应用抢占麦克风）：本轮直接停，不做"暂停后自动续录"
+          console.info('[record] 收到系统打断，停止录音');
+          this.stopRecord();
+        });
+      this.isRecording = true;
+    } catch (error) {
+      console.error(`[record] 启动录音失败: ${JSON.stringify(error)}`);
+      this.toast(uiContext, '录音启动失败');
+    } finally {
+      this.isStartingRecord = false;
+    }
+  }
+
+  /**
+   * 停止录音。
+   *
+   * **同步**先把 `isRecording` 翻掉 —— 需求要求"点停止后录音条立刻消失"，
+   * 而引擎侧真正把麦克风还回去还要约 1s（实测：挂起的阻塞 read 要那么久才以 6800301 收敛）。
+   * 所以 UI 不等引擎收尾，那一段留给 `AudioRecorder.stop()` 在后台走完。
+   */
+  stopRecord(): void {
+    if (!this.isRecording) {
+      return;
+    }
+    this.isRecording = false;
+    this.recordLevel = 0;
+    this.audioRecorder.stop()
+      .catch((error: BusinessError) => {
+        console.error(`[record] 停止录音失败: ${JSON.stringify(error)}`);
+      });
+  }
+
+  /** 每拍把引擎报上来的音量与时长写进可观察状态，并推进波形 */
+  private onRecordTick(tick: RecorderTick): void {
+    // 峰值保持 + 衰减：上升沿瞬时跟随，下降沿按系数缓落
+    this.recordLevel = Math.max(tick.level, this.recordLevel * RECORD_LEVEL_DECAY);
+    this.recordElapsedMs = tick.elapsedMs;
+    // 整体重新赋值推进波形（丢最旧、追加最新）——
+    // 不依赖 V2 对数组原地修改的观察，最稳
+    const next = this.recordWaveform.slice(1);
+    next.push(this.recordLevel);
+    this.recordWaveform = next;
+  }
+
+  /** 申请麦克风权限。已授权时不弹框，直接返回 true */
+  private async requestMicPermission(context: common.Context): Promise<boolean> {
+    const permission: Permissions = 'ohos.permission.MICROPHONE';
+    try {
+      const atManager = abilityAccessCtrl.createAtManager();
+      const result = await atManager.requestPermissionsFromUser(context, [permission]);
+      const results = result.authResults;
+      const granted = results.length > 0 && results[0] === 0; // 0 = PERMISSION_GRANTED
+      if (!granted) {
+        console.info(`[record] 麦克风权限未授予: ${JSON.stringify(results)}`);
+      }
+      return granted;
+    } catch (error) {
+      console.error(`[record] 申请麦克风权限失败: ${JSON.stringify(error)}`);
+      return false;
+    }
+  }
+
+  private toast(uiContext: UIContext, message: string): void {
+    try {
+      uiContext.getPromptAction().showToast({ message: message, duration: 2000 });
+    } catch (error) {
+      console.error(`[record] 弹提示失败: ${JSON.stringify(error)}`);
+    }
   }
 
   // ==================== 笔迹持久化 ====================
@@ -1794,6 +1926,9 @@ export class MemoEditorController {
     // 换了新的 handwriteController，上一页的就绪状态与待加载路径一律作废
     this.inkCanvasReady = false;
     this.pendingInkPath = '';
+    // 本类是进程级单例、跨页面存活：上一页若漏停录音，麦克风会一直占着。
+    // 这里兜一道底（幂等，没在录就什么都不做）
+    this.stopRecord();
   }
 
   private async selectPhoto(): Promise<Array<string> | undefined> {

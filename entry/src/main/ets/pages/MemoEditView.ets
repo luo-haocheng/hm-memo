@@ -192,6 +192,16 @@ struct MemoEditView {
       this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
 
       return false;
+    })
+    // 离开编辑页：录音必须停。
+    //
+    // 【为什么放在这里】控制器是进程级单例，录音状态与 AudioCapturer 都挂在它身上，
+    // 会**跨页面存活**。不在这里停的话，返回首页后麦克风还占着、`isRecording` 还亮着，
+    // 下次进编辑页就是"一进来就在录音"。实测 `onWillDisappear` 在返回时确实触发。
+    //
+    // 切后台是另一条路：见 `EntryAbility.onBackground`（实测切后台后应用会被系统杀掉）
+    .onWillDisappear(() => {
+      this.editorController.stopRecord();
     });
   }
 }

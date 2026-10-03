@@ -11,6 +11,22 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    // 录音需要麦克风。user_grant 权限三件套（name / reason / usedScene）都不能省：
+    // reason 必须是 $string: 资源（写裸字符串系统会拒绝），usedScene 的 abilities
+    // 必须与下面 abilities[].name 完全一致。
+    // ⚠️ 权限只能声明在 entry 模块 —— HAR 的 module.json5 不参与 HAP 清单解析
+    "requestPermissions": [
+      {
+        "name": "ohos.permission.MICROPHONE",
+        "reason": "$string:reason_microphone",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",
