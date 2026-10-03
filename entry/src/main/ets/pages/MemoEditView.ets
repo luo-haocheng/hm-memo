@@ -210,6 +210,8 @@ struct MemoEditView {
     // 切后台是另一条路：见 `EntryAbility.onBackground`（实测切后台后应用会被系统杀掉）
     .onWillDisappear(() => {
       this.editorController.stopRecord();
+      // 播放同理，而且更要紧：残留的 renderer 会一直占着音频焦点
+      this.editorController.stopPlayback();
     });
   }
 }

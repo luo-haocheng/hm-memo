@@ -81,5 +81,6 @@ export default class EntryAbility extends UIAbility {
     // 然后随进程一起消失，不如主动停掉、把释放逻辑走完整。
     //（页面内的 `onWillDisappear` 只管"返回上一页"，不管"退到后台"，所以这里要单独兜）
     MemoEditorController.instance.stopRecord();
+    MemoEditorController.instance.stopPlayback();
   }
 };

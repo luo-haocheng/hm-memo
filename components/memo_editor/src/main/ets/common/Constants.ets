@@ -28,6 +28,12 @@ export const RECORD_SAMPLE_RATE = 16000;
 export const RECORD_BYTES_PER_FRAME = 2;
 
 /**
+ * PCM 字节数 → 毫秒 的换算系数（16k × 2 字节 ÷ 1000 = **32 字节/毫秒**）。
+ * 录音侧算时长、播放侧算进度与 seek 偏移都用它，别在两处各写一遍。
+ */
+export const AUDIO_BYTES_PER_MS = RECORD_SAMPLE_RATE * RECORD_BYTES_PER_FRAME / 1000;
+
+/**
  * 音量计算与上报的最小间隔（毫秒）。
  * 单个 buffer（实测 640 字节 = 20ms）的 RMS 抖动大，攒够一个窗口再算才不闪。
  */
@@ -59,6 +65,25 @@ export const RECORD_BAR_MIN_HEIGHT = 2;
 
 /** 波形柱的最大高度（vp）。柱子**以中线为轴对称**，所以这是总高的一半 */
 export const RECORD_BAR_MAX_HEIGHT = 20;
+
+/**
+ * 播放进度上报的最小间隔（毫秒）。
+ * 与录音的 `RECORD_LEVEL_WINDOW_MS` 同节奏（5fps）—— 文本只显示到秒，
+ * 这个频率足够顺眼，也不引入新的刷新范式（工程零 setInterval）。
+ */
+export const PLAYBACK_TICK_MS = 200;
+
+/**
+ * 播放收尾时等待读/写循环收敛的上限（毫秒）。
+ *
+ * 【为什么必须有】真机实测（P12）：有在途 `write()` 时调 `release()` 不会崩，
+ * 但**那个 write 的 promise 永远不会 settle**。所以收尾**绝不能不加超时地 await 它**，
+ * 否则永久挂死。这里只是兜底，正常路径由循环自己退出。
+ */
+export const PLAYBACK_STOP_JOIN_TIMEOUT_MS = 1200;
+
+/** 播完最后一个字节后等 `drain()` 的上限（毫秒）。实测约 95ms 就返回 */
+export const PLAYBACK_DRAIN_TIMEOUT_MS = 1500;
 
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =

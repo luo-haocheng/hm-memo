@@ -79,6 +79,13 @@ export struct MemoEditorArea {
   @Event saveStatusChange: (isSaved: boolean) => void = () => {
   };
   private controller: MemoEditorController = MemoEditorController.instance;
+  /**
+   * 拖动进度条时的**本地**位置（毫秒），-1 表示没在拖。
+   *
+   * 【为什么不直接写控制器】拖动是 60fps 的高频事件，写进 `@Trace` 会让整页
+   * 跟着重算。用 `@Local` 承接手指，只重绘进度条这一段；松手才把目标交给控制器。
+   */
+  @Local dragPositionMs: number = -1;
   private styleDialogId = -1;
   // 编辑层 Scroll 的控制器。滚动同步要靠它读绝对偏移（onDidScroll 只给增量）
   private editorScroller: Scroller = new Scroller();
@@ -450,6 +457,85 @@ export struct MemoEditorArea {
     .backgroundColor($r('sys.color.background_secondary'));
   }
 
+  /**
+   * 播放条。从左到右四段：**播放/暂停按钮 / 当前时间 / 进度条 / 总时间**。
+   *
+   * 与录音条**同一个插槽**（标题与正文之间），但录音期间不显示 —— 见 build 里的插入点。
+   */
+  @Builder
+  playerBar() {
+    Row({ space: 8 }) {
+      // ① 播放 / 暂停。图标用形状原语画，不新增资源（与录音条的停止按钮同一路数）
+      Image(this.controller.isPlaying ? $r('app.media.pause_circle') : $r('app.media.play_circle'))
+        .width(24)
+        .height(24)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          this.controller.togglePlayback(this.getUIContext())
+            .catch((error: BusinessError) => {
+              console.error(`[play] 切换播放时未捕获的异常: ${JSON.stringify(error)}`);
+            });
+        });
+
+      // ② 当前播放时间（拖动中显示手指位置，跟手）
+      Text(formatRecordDuration(
+        this.dragPositionMs >= 0 ? this.dragPositionMs : this.controller.playbackPositionMs))
+        .fontSize(8)
+        .fontColor($r('sys.color.font_secondary'));
+
+      // ③ 进度条。**拖动中只更新显示、绝不 seek；松手才跳**
+      Slider({
+        value: this.dragPositionMs >= 0 ? this.dragPositionMs : this.controller.playbackPositionMs,
+        min: 0,
+        // ⚠️ max 不能为 0 —— 否则 value 恒为 0，且内部可能除零
+        max: Math.max(1, this.controller.playbackDurationMs),
+        style: SliderStyle.OutSet,
+      })
+        .height(32)
+        .layoutWeight(1)
+        .trackThickness(4)
+        .blockColor('#EBAC24')
+        .selectedColor('#EBAC24')
+        .onChange((value: number, mode: SliderChangeMode) => {
+          if (mode === SliderChangeMode.Begin || mode === SliderChangeMode.Moving) {
+            this.dragPositionMs = value;
+          } else {
+            this.dragPositionMs = -1;
+            this.controller.seekPlayback(Math.round(value));
+          }
+        });
+
+      // ④ 总时长
+      Text(formatRecordDuration(this.controller.playbackDurationMs))
+        .fontSize(8)
+        .fontColor($r('sys.color.font_secondary'));
+
+      Image($r('app.media.dot_grid_1x2'))
+        .width(24)
+        .height(24)
+        .fillColor($r('sys.color.font_primary'))
+        .bindMenu([
+          {
+            value: '保存',
+            action: () => {
+              // todo
+            }
+          },
+          {
+            value: '删除',
+            action: () => {
+              // todo
+            }
+          }
+        ]);
+    }
+    .padding(8)
+    .margin({ left: 12, right: 12 })
+    .borderRadius(12)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('sys.color.background_secondary'));
+  }
+
   @Builder
   fileChip(info: FileChipInfo) {
     FileChip({
@@ -565,9 +651,18 @@ export struct MemoEditorArea {
               this.titleChange(value);
             });
 
-          // 录音条：标题与正文之间（需求 3）。只在录音期间存在
+          // 录音条 / 播放条共用这一个插槽（标题与正文之间）：
+          //   - 录音期间：只显示录音条，**不显示播放条**（需求 3）
+          //   - 非录音、且这条备忘有录音文件时：显示播放条
+          //
+          // ⚠️ 手写模式下播放条**照常显示**（用户明确要求），但它此刻**点不动** ——
+          //    手写画布是 `.enabled(true)` 且盖在整个编辑层之上、会拦截触摸，
+          //    正文本身在手写模式下也一样点不动。切换进手写时已经 `stopPlayback()`
+          //    停掉了播放（断点位置保留），所以不会出现"看不见却还在响"
           if (this.controller.isRecording) {
             this.recordBar();
+          } else if (this.controller.playbackDurationMs > 0) {
+            this.playerBar();
           }
 
           RichEditor({ controller: this.controller.contentController })
@@ -599,6 +694,8 @@ export struct MemoEditorArea {
               this.controller.resetAttachments(this.editingMemo.memoBlockArr);
               // 恢复手写笔迹。放在这里是因为此刻 editingMemo 一定是对的那一条
               this.requestInkLoad();
+              // 准备播放：解析录音路径 + 取时长（时长为 0 就不显示播放条）
+              this.controller.preparePlayback(this.getUIContext(), this.editingMemo);
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;

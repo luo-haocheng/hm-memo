@@ -24,9 +24,17 @@ import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
 import { display } from '@kit.ArkUI';
-import { COLOR_LIST, DEFAULT_FONT_SIZE, RECORD_BAR_COUNT, RECORD_LEVEL_DECAY } from '../common/Constants';
+import {
+  AUDIO_BYTES_PER_MS,
+  COLOR_LIST,
+  DEFAULT_FONT_SIZE,
+  RECORD_BAR_COUNT,
+  RECORD_BYTES_PER_FRAME,
+  RECORD_LEVEL_DECAY
+} from '../common/Constants';
 import { HandwriteController } from '@kit.Penkit';
 import { AudioRecorder, RecorderTick } from '../recorder/AudioRecorder';
+import { PcmPlayer, PlaybackTick } from '../recorder/PcmPlayer';
 
 // 相册照片的固定样式参数（插入与撤销/重做共用，改这里两边一起生效）
 const FILE_IMAGE_BORDER_RADIUS = 12;
@@ -334,6 +342,26 @@ export class MemoEditorController {
   private audioRecorder: AudioRecorder = new AudioRecorder();
   // 正在申请权限 / 启动录音。防"连点两次录音按钮"在 isRecording 置位之前又进来一次
   private isStartingRecord: boolean = false;
+  // ==================== 播放 ====================
+  // 是否正在播放（暂停时是 false —— 按钮要变回"播放"）
+  @Trace isPlaying: boolean = false;
+  // 当前播放位置（毫秒）。按 PLAYBACK_TICK_MS 的窗口节流上报，不是每 buffer 刷
+  @Trace playbackPositionMs: number = 0;
+  /**
+   * 录音总时长（毫秒）。**兼作"有没有录音"的标志** —— 0 就不显示播放条
+   *（没有录音 / 文件已被回收 / 文件为空）
+   */
+  @Trace playbackDurationMs: number = 0;
+  // 播放引擎。非 @Trace —— UI 只读上面那几个状态字段
+  private player: PcmPlayer = new PcmPlayer();
+  /**
+   * UI 侧的播放会话令牌：**任何** `stopPlayback()` 都会让它自增。
+   * 与录音的 `recordSession` 同一套路数 —— `play()` 里 `createAudioRenderer`
+   * 同样是异步的，"点播放后立刻返回"的竞态照样存在
+   */
+  private playSession: number = 0;
+  /** 当前备忘的录音文件绝对路径（空串表示没有）。进页面时由 preparePlayback 设置 */
+  private playbackPath: string = '';
   // 用户操作记录历史。非 @Trace —— 避免大对象被 V2 观察机制包裹，UI 只看下标与长度
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
@@ -1288,8 +1316,10 @@ export class MemoEditorController {
    */
   toggleHandWrite() {
     // 切进手写前先停录音：手写画布是 `.enabled(true)` 且盖在编辑层之上，
-    // 不停的话录音条上的停止按钮会被画布截住、点不动
+    // 不停的话录音条上的停止按钮会被画布截住、点不动。
+    // 播放同理（而且播放条在手写模式下根本不显示，不停就成了"看不见还在响"）
     this.stopRecord();
+    this.stopPlayback();
     if (!this.isHandWrite) {
       try {
         this.titleController.stopEditing();
@@ -1323,6 +1353,10 @@ export class MemoEditorController {
       console.error('[record] 取不到 host context，无法录音');
       return;
     }
+
+    // 录音与播放互斥：开始录音前先把正在进行的播放停掉
+    // （需求规定录音时不显示播放条，但播放本身必须真的停，否则音频还在响却没有控件）
+    this.stopPlayback();
 
     // 会话令牌：任何 stopRecord() 都会让它失效，用来拦住"启动期间被取消"
     const session = ++this.recordSession;
@@ -1371,6 +1405,11 @@ export class MemoEditorController {
       // **只有真的开始录了**才把文件名记到备忘上：失败时不污染它，
       // 那半截没人引用的空文件会在下次启动被回收
       memo.audioFile = fileName;
+      // 同时把路径告诉播放侧。
+      // 【为什么必须有这一步】新建备忘时 `preparePlayback` 拿到的 audioFile 还是空的，
+      // 路径会留空 —— 不在这里补上的话，录完之后 `stopRecord` 那次刷新时长
+      // 会因为"路径为空"而算出 0，播放条永远不出现
+      this.playbackPath = path;
       this.isRecording = true;
     } catch (error) {
       console.error(`[record] 启动录音失败: ${JSON.stringify(error)}`);
@@ -1396,6 +1435,11 @@ export class MemoEditorController {
     // 引擎的 stop() 是幂等的（没在录时只是等上一次收尾），可以随便调
     this.recordSession++;
     this.audioRecorder.stop()
+      .then(() => {
+        // 引擎**真正收尾之后**才刷新时长：那之前录音循环还可能再追加一两个 buffer，
+        // 此刻 stat 出来的时长会偏短，播放条上的总时间就会跳一下
+        this.refreshPlaybackDuration();
+      })
       .catch((error: BusinessError) => {
         console.error(`[record] 停止录音失败: ${JSON.stringify(error)}`);
       });
@@ -1442,6 +1486,137 @@ export class MemoEditorController {
       uiContext.getPromptAction().showToast({ message: message, duration: 2000 });
     } catch (error) {
       console.error(`[record] 弹提示失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  // ==================== 播放 ====================
+
+  /**
+   * 进编辑页时准备播放：解析当前备忘的录音路径、取一次时长。
+   *
+   * 时长兼作"有没有录音"的标志（见 `playbackDurationMs`）—— 取不到就按没录音处理，
+   * 播放条不显示。与 `requestInkLoad` 同款的存在性检查思路。
+   */
+  preparePlayback(uiContext: UIContext, memo: Memo): void {
+    this.playbackPath = memo.audioFile === ''
+      ? ''
+      : resolveAudioPath(uiContext, memo.audioFile);
+    this.playbackPositionMs = 0;
+    this.refreshPlaybackDuration();
+  }
+
+  /**
+   * 重新读一次录音文件的时长。
+   *
+   * 【为什么单独一个方法】录音是**追加**写入的，录完一轮文件就变长了。
+   * 而 `stopRecord()` 一翻 `isRecording`、播放条马上就出现了，此刻录音循环可能还在
+   * 收尾（实测还要约 1s、期间仍可能追加一两个 buffer），stat 出来的时长会偏短。
+   * 所以 `stopRecord()` 在引擎真正收尾之后会再调它一次。
+   */
+  refreshPlaybackDuration(): void {
+    if (this.playbackPath === '') {
+      this.playbackDurationMs = 0;
+      return;
+    }
+    try {
+      const size = fileIo.statSync(this.playbackPath).size;
+      // 半帧（进程被杀留下的）不算时长 —— 与播放侧同一对齐口径
+      const playable = size - (size % RECORD_BYTES_PER_FRAME);
+      this.playbackDurationMs = Math.max(0, Math.floor(playable / AUDIO_BYTES_PER_MS));
+    } catch (error) {
+      // 文件不存在（可能已被孤儿回收删掉）或读不到：当作没有录音，不显示播放条
+      console.info(`[play] 取录音时长失败，按无录音处理: ${JSON.stringify(error)}`);
+      this.playbackDurationMs = 0;
+    }
+  }
+
+  /** 播放 / 暂停 切换 */
+  async togglePlayback(uiContext: UIContext): Promise<void> {
+    // 录音期间播放条是隐藏的、按钮点不到；这里是防御
+    if (this.isRecording) {
+      return;
+    }
+    if (this.isPlaying) {
+      await this.player.pause();
+      this.isPlaying = false;
+      return;
+    }
+    await this.startPlayback(uiContext);
+  }
+
+  private async startPlayback(uiContext: UIContext): Promise<void> {
+    if (this.playbackPath === '') {
+      return;
+    }
+    const session = ++this.playSession;
+    try {
+      const started = await this.player.play(
+        this.playbackPath,
+        (tick: PlaybackTick) => {
+          this.playbackPositionMs = tick.positionMs;
+        },
+        () => {
+          // 播完：回到开头、按钮变回"播放"（需求已定）
+          console.info('[play] 播放到末尾，回到开头');
+          this.onPlaybackFinished();
+        },
+        (reason: string) => {
+          console.info(`[play] 播放中止: ${reason}`);
+          this.stopPlayback();
+        });
+      if (!started || session !== this.playSession) {
+        return; // 启动期间被取消，引擎已把建出来的东西收拾干净
+      }
+      // 播放侧会自己 stat 一次并冻结时长，用它的值覆盖可能偏短的显示
+      this.playbackDurationMs = this.player.getDurationMs();
+      this.isPlaying = true;
+    } catch (error) {
+      console.error(`[play] 启动播放失败: ${JSON.stringify(error)}`);
+      this.isPlaying = false;
+      this.toast(uiContext, '播放失败');
+    }
+  }
+
+  /** 播完（自然结束）：位置归零、按钮变回"播放"，并把引擎收掉 */
+  private onPlaybackFinished(): void {
+    this.isPlaying = false;
+    this.playbackPositionMs = 0;
+    // 【必须显式归零】`stop()` 本身**不**动断点位置（切后台/切手写要靠它续播），
+    // 所以"播完"这条自然结束的路要自己把它清掉，否则下次点播放会立刻又撞到末尾
+    this.player.resetPosition();
+    this.player.stop()
+      .catch((error: BusinessError) => {
+        console.error(`[play] 播放结束后收尾失败: ${JSON.stringify(error)}`);
+      });
+  }
+
+  /**
+   * 停止播放并释放 renderer。
+   *
+   * 【为什么无条件做这两件事】与 `stopRecord()` 同一理由：`isPlaying` 是
+   * `play()` resolve 之后才置位的，光靠它拦不住"点播放后立刻返回"。
+   * 引擎的 `stop()` 幂等，可以随便调。
+   *
+   * ⚠️ **离开页面必须调它** —— 本类是进程级单例，残留的 renderer 会一直占着音频焦点。
+   */
+  stopPlayback(): void {
+    this.playSession++;
+    this.player.stop()
+      .catch((error: BusinessError) => {
+        console.error(`[play] 停止播放失败: ${JSON.stringify(error)}`);
+      });
+    if (!this.isPlaying) {
+      return;
+    }
+    this.isPlaying = false;
+  }
+
+  /** 进度条**松手**时调用（拖动中不 seek，只更新显示） */
+  seekPlayback(positionMs: number): void {
+    this.player.seekTo(positionMs, this.playbackDurationMs);
+    // 立刻把 UI 拉过去，不等下一个 tick 窗口
+    if (this.playbackDurationMs > 0) {
+      this.playbackPositionMs = Math.max(0, Math.min(positionMs, this.playbackDurationMs));
     }
   }
 
@@ -1967,9 +2142,14 @@ export class MemoEditorController {
     // 换了新的 handwriteController，上一页的就绪状态与待加载路径一律作废
     this.inkCanvasReady = false;
     this.pendingInkPath = '';
-    // 本类是进程级单例、跨页面存活：上一页若漏停录音，麦克风会一直占着。
-    // 这里兜一道底（幂等，没在录就什么都不做）
+    // 本类是进程级单例、跨页面存活：上一页若漏停录音/播放，麦克风或 renderer 会一直占着。
+    // 这里兜一道底（两者都幂等）
     this.stopRecord();
+    this.stopPlayback();
+    // 换了一条备忘，上一页的录音路径作废；时长等 onReady 里 preparePlayback 重新算
+    this.playbackPath = '';
+    this.playbackDurationMs = 0;
+    this.playbackPositionMs = 0;
   }
 
   private async selectPhoto(): Promise<Array<string> | undefined> {
