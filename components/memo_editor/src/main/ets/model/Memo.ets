@@ -41,6 +41,21 @@ export const ATTACHMENT_DIR_NAME = 'memo_files';
 export const INK_DIR_NAME = 'memo_ink';
 
 /**
+ * 录音 PCM 存放的子目录名（相对于 filesDir）。
+ *
+ * 里面存的是 AudioCapturer 读出的**裸 PCM 流**（16kHz / 单声道 / S16LE），
+ * 没加任何文件头 —— 我们只负责搬运和回收，不解析。
+ *
+ * ⚠️ **没有文件头是刻意的**：WAV 的 RIFF size 字段要求长度已知，
+ *    而这里的写入方式是"每次录音往后追加"，长度随时在变，天生冲突。
+ *    代价是系统播放器/分享都打不开这种文件，将来要回放只能自己写播放器。
+ *
+ * 生命周期与 IMAGE_DIR_NAME 一致：白名单式回收，
+ * 由 MemoService.reclaimOrphanAudio 删除不再被任何备忘引用的文件。
+ */
+export const AUDIO_DIR_NAME = 'memo_audio';
+
+/**
  * 常见后缀 → MIME 的本地表。
  *
  * 有了它就不必为常见类型走一次系统查询，也避开 UTD 对未知后缀回落成"灵活类型"
@@ -158,6 +173,16 @@ export function resolveInkPath(uiContext: UIContext, fileName: string): string {
     return '';
   }
   return `${context.filesDir}/${INK_DIR_NAME}/${fileName}`;
+}
+
+/** 录音文件名 → 绝对路径（沙箱内）。与图片、附件、笔迹同一口径：存档只留文件名 */
+export function resolveAudioPath(uiContext: UIContext, fileName: string): string {
+  const context = uiContext.getHostContext();
+  if (context === undefined) {
+    console.error(`[audio] 取不到 host context，无法解析录音路径: ${fileName}`);
+    return '';
+  }
+  return `${context.filesDir}/${AUDIO_DIR_NAME}/${fileName}`;
 }
 
 // 图片最长边上限（px）。解码时按此降采样，同时降低编码耗时、文件体积与内存占用。
@@ -472,6 +497,23 @@ export class Memo {
    */
   inkFile: string = '';
 
+  /**
+   * 录音 PCM 的文件名（不含目录），空串表示这条备忘没有录音。
+   *
+   * 【一备忘一文件】文件名只在**第一次录音时**生成、之后一直复用 ——
+   * 每次录音都是往同一个文件**追加**（见 AudioRecorder / PcmFileWriter）。
+   * 所以这个文件只增不减，没有清除入口。
+   *
+   * 【提交点是"录音开始"，不是"保存"】与文本、标题、inkFile 都不同：
+   * 那些是 `saveMemo()` 时才进 KV，而 PCM 是录音时就 append 进文件了。
+   * 对已保存过的备忘，点录音就开始改盘上文件；此后返回不保存，
+   * **音频已经改掉了**。这是"追加写入"这一需求直接推出来的，不是缺陷。
+   *
+   * ⚠️ 它是"一备忘一文件"的身份标识。将来若加"复制备忘"功能，
+   *    **绝不能直接复用这个字段** —— 那样两条备忘会共写同一个文件。
+   */
+  audioFile: string = '';
+
   constructor(title?: string, categoryId?: string) {
     this.title = title || '';
     this.categoryId = categoryId || '';
@@ -680,6 +722,16 @@ export class Memo {
   collectInkFileNames(into: Set<string>) {
     if (this.inkFile) {
       into.add(this.inkFile);
+    }
+  }
+
+  /**
+   * 收集本备忘引用的录音文件名（供孤儿回收使用）
+   * 与收集笔迹文件名同一口径：只收文件名，回收时按白名单比对
+   */
+  collectAudioFileNames(into: Set<string>) {
+    if (this.audioFile) {
+      into.add(this.audioFile);
     }
   }
 

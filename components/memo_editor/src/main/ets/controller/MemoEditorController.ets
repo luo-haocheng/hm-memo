@@ -8,8 +8,10 @@ import {
   calcDesiredSize,
   doneTextColor,
   isBuilderSpan,
+  Memo,
   MemoBlock,
   mimeOfFileName,
+  resolveAudioPath,
   TODO_MARK_DONE,
   TODO_MARK_OPEN,
   toggledTodoMark
@@ -315,6 +317,15 @@ export class MemoEditorController {
   @Trace recordLevel: number = 0;
   // 已录时长（毫秒）。UI 格式化成 mm:ss
   @Trace recordElapsedMs: number = 0;
+  /**
+   * UI 侧的录音会话令牌：**任何** `stopRecord()` 都会让它自增。
+   *
+   * 与 `AudioRecorder` 内部那个 `sessionId` 是配套的两道闸：
+   * 这里管"`startRecord` 的 await 期间被取消了就别置位 `isRecording`"，
+   * 引擎那边管"在途的 start 自己收拾干净"。
+   * 少了它，"点录音后立刻按返回"会让录音照常起来、麦克风留在开着。
+   */
+  private recordSession: number = 0;
   // 波形历史：定长数组，每拍整体重新赋值（见 onRecordTick）。
   // ⚠️ 用整体赋值而不是 push —— 不依赖 V2 对数组原地修改的观察
   @Trace recordWaveform: number[] = [];
@@ -1303,7 +1314,7 @@ export class MemoEditorController {
    * 【context 从哪来】与 `insertImage` / `insertFile` 同一路子：`uiContext.getHostContext()`。
    * `uiContext` 只作形参在栈上用，**绝不写进字段** —— 本类是单例，存组件作用域的东西会吊住组件。
    */
-  async startRecord(uiContext: UIContext): Promise<void> {
+  async startRecord(uiContext: UIContext, memo: Memo): Promise<void> {
     if (this.isRecording || this.isStartingRecord) {
       return;
     }
@@ -1313,14 +1324,25 @@ export class MemoEditorController {
       return;
     }
 
+    // 会话令牌：任何 stopRecord() 都会让它失效，用来拦住"启动期间被取消"
+    const session = ++this.recordSession;
     this.isStartingRecord = true;
     try {
       if (!await this.requestMicPermission(context)) {
         this.toast(uiContext, '需要麦克风权限才能录音');
         return;
       }
-      // 申请权限期间用户可能又点了一次
-      if (this.isRecording) {
+      if (session !== this.recordSession || this.isRecording) {
+        return; // 申请权限期间用户已经喊停 / 又点了一次
+      }
+
+      // 文件名只在第一次录音时生成，之后一直复用 —— 每次录音都往同一个文件追加（需求 1）
+      const fileName = memo.audioFile !== ''
+        ? memo.audioFile
+        : `${util.generateRandomUUID()}.pcm`;
+      const path = resolveAudioPath(uiContext, fileName);
+      if (path === '') {
+        this.toast(uiContext, '录音启动失败');
         return;
       }
 
@@ -1329,15 +1351,26 @@ export class MemoEditorController {
       this.recordElapsedMs = 0;
       this.recordWaveform = new Array<number>(RECORD_BAR_COUNT).fill(0);
 
-      await this.audioRecorder.start(
+      const started = await this.audioRecorder.start(
         (tick: RecorderTick) => {
           this.onRecordTick(tick);
         },
-        () => {
-          // 系统打断（来电 / 被其他应用抢占麦克风）：本轮直接停，不做"暂停后自动续录"
-          console.info('[record] 收到系统打断，停止录音');
+        (reason: string) => {
+          // 引擎需要中止本次录音（系统打断 / 读取失败 / 写盘失败）。
+          // 引擎自己会把麦克风与文件收干净，这里只负责把 UI 状态翻回来
+          console.info(`[record] 中止录音: ${reason}`);
           this.stopRecord();
-        });
+        },
+        path);
+
+      if (!started || session !== this.recordSession) {
+        // 启动期间被取消 —— 引擎已经把建出来的东西收拾干净了
+        console.info('[record] 启动被取消（期间收到过停止请求）');
+        return;
+      }
+      // **只有真的开始录了**才把文件名记到备忘上：失败时不污染它，
+      // 那半截没人引用的空文件会在下次启动被回收
+      memo.audioFile = fileName;
       this.isRecording = true;
     } catch (error) {
       console.error(`[record] 启动录音失败: ${JSON.stringify(error)}`);
@@ -1355,15 +1388,23 @@ export class MemoEditorController {
    * 所以 UI 不等引擎收尾，那一段留给 `AudioRecorder.stop()` 在后台走完。
    */
   stopRecord(): void {
+    // 【无条件做这两件事，哪怕当前没在录】
+    // ① 递增会话令牌：让在途的 `startRecord` 知道"已经被取消了"
+    // ② 调引擎的 stop：引擎那边同样无条件自增 `sessionId`，是在途 `start()` 的唯一取消点
+    // 少了这一步，"点录音后立刻按返回"会让录音照常起来、麦克风留在开着 ——
+    // 因为此刻 `isRecording` 还是 false，下面的早返回正好把它挡掉。
+    // 引擎的 stop() 是幂等的（没在录时只是等上一次收尾），可以随便调
+    this.recordSession++;
+    this.audioRecorder.stop()
+      .catch((error: BusinessError) => {
+        console.error(`[record] 停止录音失败: ${JSON.stringify(error)}`);
+      });
+
     if (!this.isRecording) {
       return;
     }
     this.isRecording = false;
     this.recordLevel = 0;
-    this.audioRecorder.stop()
-      .catch((error: BusinessError) => {
-        console.error(`[record] 停止录音失败: ${JSON.stringify(error)}`);
-      });
   }
 
   /** 每拍把引擎报上来的音量与时长写进可观察状态，并推进波形 */

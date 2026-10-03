@@ -4,7 +4,9 @@ export {
   IMAGE_DIR_NAME,
   ATTACHMENT_DIR_NAME,
   INK_DIR_NAME,
+  AUDIO_DIR_NAME,
   resolveInkPath,
+  resolveAudioPath,
   removeDirRecursively
 } from './src/main/ets/model/Memo';
 

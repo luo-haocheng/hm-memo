@@ -1,4 +1,11 @@
-import { ATTACHMENT_DIR_NAME, IMAGE_DIR_NAME, INK_DIR_NAME, Memo, removeDirRecursively } from 'memo_editor';
+import {
+  ATTACHMENT_DIR_NAME,
+  AUDIO_DIR_NAME,
+  IMAGE_DIR_NAME,
+  INK_DIR_NAME,
+  Memo,
+  removeDirRecursively
+} from 'memo_editor';
 import { KVStore } from 'data_source';
 import { CategoryService } from './CategoryService';
 import { SortMethodEnum, SystemCategory, UserCategory } from './Model';
@@ -10,6 +17,12 @@ const RECLAIM_DRY_RUN = false;
 
 // 备忘图片的扩展名白名单，目录内其余文件一律不处理
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'];
+
+// 录音文件的扩展名白名单。我们始终用 .pcm，所以这次能加白名单 ——
+// 与笔迹那边**刻意不同**（笔迹是 Penkit 的私有格式、没有固定后缀，只能"不在引用里就删"）。
+// 副作用：将来若往 memo_audio/ 放临时文件（比如 .part），那些文件**永远不会被回收**，
+// 到时候要记得同步这里。
+const AUDIO_EXTENSION = '.pcm';
 
 @ObservedV2
 export class MemoService {
@@ -327,6 +340,85 @@ export class MemoService {
   }
 
   /**
+   * 回收孤儿录音：删除 memo_audio 下不再被任何备忘（含回收站）引用的文件。
+   *
+   * 与 reclaimOrphanInk 完全同构（单级目录、白名单式、只认引用名），
+   * 差别有两处：目录不同，以及**这里加了 `.pcm` 扩展名白名单**
+   *（笔迹没有固定后缀所以加不了，见 AUDIO_EXTENSION 的注释）。
+   *
+   * 安全约束同上：isFullyLoaded 前置、先收集全部引用再遍历删除、
+   * 认不出的条目一律不动、内部不抛异常（可由调用方 fire-and-forget）。
+   *
+   * ⚠️ 需求「备忘被永久删除时录音文件同时删除」就是靠这里实现的 ——
+   *    `deletePermanently` 本身不删任何文件，与图片/附件/笔迹完全一致。
+   */
+  public reclaimOrphanAudio(uiContext: UIContext) {
+    if (!this.isFullyLoaded) {
+      console.info('Skip reclaiming orphan audio: memos are not fully loaded.');
+      return;
+    }
+    const context = uiContext.getHostContext();
+    if (context === undefined) {
+      console.error('Failed to reclaim orphan audio: host context is unavailable.');
+      return;
+    }
+    const dir = `${context.filesDir}/${AUDIO_DIR_NAME}`;
+    try {
+      if (!fileIo.accessSync(dir)) {
+        return; // 从未录过音，属于正常情况
+      }
+    } catch (error) {
+      console.info(`Failed to access audio dir: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    // 1. 白名单：收集所有被引用的文件名（有效备忘 + 回收站）
+    const referenced = new Set<string>();
+    for (const memo of this.memoList) {
+      memo.collectAudioFileNames(referenced);
+    }
+    for (const memo of this.dumpsters) {
+      memo.collectAudioFileNames(referenced);
+    }
+
+    // 2. 扫描目录并逐个比对
+    let fileNames: string[] = [];
+    try {
+      fileNames = fileIo.listFileSync(dir);
+    } catch (error) {
+      console.error(`Failed to list audio dir: ${dir}. Cause: ${JSON.stringify(error)}`);
+      return;
+    }
+
+    let removedCount = 0;
+    for (const rawName of fileNames) {
+      const fileName = rawName.substring(rawName.lastIndexOf('/') + 1);
+      if (!fileName.toLowerCase().endsWith(AUDIO_EXTENSION)) {
+        continue; // 认不出的条目一律不动
+      }
+      if (referenced.has(fileName)) {
+        continue;
+      }
+      const path = `${dir}/${fileName}`;
+      try {
+        const size = fileIo.statSync(path).size;
+        if (RECLAIM_DRY_RUN) {
+          console.info(`[reclaim] would remove orphan audio: ${fileName} (${size} bytes)`);
+        } else {
+          fileIo.unlinkSync(path);
+          console.info(`[reclaim] removed orphan audio: ${fileName} (${size} bytes)`);
+        }
+        removedCount++;
+      } catch (error) {
+        // 删不掉最多留个孤儿，下次回收再试
+        console.error(`Failed to remove orphan audio: ${path}. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+    console.info(`[reclaim] orphan audio ${RECLAIM_DRY_RUN ? 'to remove' : 'removed'}: `
+      + `${removedCount}, kept: ${referenced.size}.`);
+  }
+
+  /**
    * 添加笔记
    */
   public async addMemo(memo: Memo, kvStore?: KVStore, uiContext?: UIContext) {
@@ -590,6 +682,8 @@ export class MemoService {
     memo.memoBlockArr = Array.isArray(serializedMemo.memoBlockArr) ? serializedMemo.memoBlockArr : [];
     // 兼容历史数据：加笔迹之前的记录没有 inkFile 字段
     memo.inkFile = serializedMemo.inkFile ?? '';
+    // 兼容历史数据：加录音之前的记录没有 audioFile 字段
+    memo.audioFile = serializedMemo.audioFile ?? '';
     return memo;
   }
 }

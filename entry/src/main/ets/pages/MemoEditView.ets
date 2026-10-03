@@ -92,9 +92,17 @@ struct MemoEditView {
   async saveMemo(): Promise<boolean> {
     let styledString = this.editorController.contentController.toStyledString({});
     let contentStr = styledString.getString();
-    // 若新增笔记，内容和标题为空，不保存
-    // 修改笔记，内容和标题为空，按返回无响应
-    if (contentStr === '' && this.memoTitle === '') {
+    // 若新增笔记，内容、标题、录音都为空，不保存；修改笔记同理，按返回无响应。
+    //
+    // 【为什么录音算"有内容"】录音是**录音时就追加落盘**的，等保存时才算数就晚了 ——
+    // 不放宽的话，"新建备忘 → 直接录音 → 保存"这条最自然的路径会把录音静默丢掉
+    //（备忘都没进 KV，文件下次启动就被当孤儿回收了）。
+    //
+    // 【为什么笔迹不算】用户此前明确说过笔迹那条"要不要让有笔迹也算有内容，
+    // 等确认实际场景" —— 也就是**有意**把笔迹排除在外。这个非对称是显式的产品决策，
+    // 不是漏改，别顺手把 inkFile 也补进来。
+    const hasAudio = this.currentMemo.audioFile !== '';
+    if (contentStr === '' && this.memoTitle === '' && !hasAudio) {
       return this.isEditMemo ? false : true;
     }
 

@@ -331,7 +331,8 @@ export struct MemoEditorArea {
             if (this.controller.isRecording) {
               return;
             }
-            this.controller.startRecord(this.getUIContext())
+            // 把备忘传进去：录音文件的名字要落到它的 audioFile 上（一备忘一文件）
+            this.controller.startRecord(this.getUIContext(), this.editingMemo)
               .catch((error: BusinessError) => {
                 console.error(`[record] 启动录音时未捕获的异常: ${JSON.stringify(error)}`);
               });

@@ -217,6 +217,10 @@ struct Index {
       this.memoService.reclaimOrphanAttachments(this.uiContext);
       // 手写笔迹同理：白名单式回收，按 Memo.inkFile 比对
       this.memoService.reclaimOrphanInk(this.uiContext);
+      // 录音 PCM 同理，按 Memo.audioFile 比对。
+      // ⚠️ 「备忘被永久删除时录音文件同时删除」就是靠这里实现的 ——
+      // deletePermanently 本身不删任何文件，与图片/附件/笔迹完全一致
+      this.memoService.reclaimOrphanAudio(this.uiContext);
     }, 0);
   }
 
