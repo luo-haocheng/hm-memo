@@ -112,6 +112,8 @@ export struct MemoEditorArea {
             } catch (error) {
               console.error(`Failed to closeCustomeDialog. Cause: ${JSON.stringify(error)}`);
             }
+            // 关掉之后要把 id 清掉：它同时是 onSelectionChange 里"弹窗是否开着"的判据
+            this.styleDialogId = -1;
           });
       }
       .width('100%')
@@ -154,15 +156,21 @@ export struct MemoEditorArea {
             });
           });
 
+        // 三个对齐按钮共用一个可用性开关（对齐是"整段一个值"，不逐值判定）。
+        // 附件 chip 与列表段落（无序 / 有序 / 待办）不能改对齐，那时三个一起置灰
         ForEach(
           this.controller.alignInfoArr,
           (item: AlignmentInfo) => {
             Image(item.icon)
               .width(24)
-              .fillColor($r('sys.color.font_primary'))
+              .fillColor(this.controller.canSetAlign
+                ? $r('sys.color.font_primary')
+                : $r('sys.color.font_tertiary'))
+              .opacity(this.controller.canSetAlign ? 1 : 0.4)
+              .enabled(this.controller.canSetAlign)
               .onClick(() => {
-                this.controller.alignStyle = item.value;
-                this.controller.updateParagraphStyle({ textAlign: this.controller.alignStyle });
+                // 走 setParagraphAlign：改对齐（不论改成哪种）会**清掉缩进**，见该方法的注释
+                this.controller.setParagraphAlign(item.value);
               });
           },
           (item: AlignmentInfo) => JSON.stringify(item)
@@ -179,20 +187,29 @@ export struct MemoEditorArea {
         .color($r('sys.color.ohos_id_color_button_divider'));
 
       Row() {
-        // 向右缩进
+        // 向右缩进。不可用时置灰 + `.enabled(false)` —— 与录音中按钮同一手法：
+        // 只改颜色的话点下去仍会走 onClick（虽然内部会 no-op），用户会以为按钮坏了
         Image($r('app.media.indent_right'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canIndentIncrease
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canIndentIncrease ? 1 : 0.4)
+          .enabled(this.controller.canIndentIncrease)
           .onClick(() => {
-            // todo
+            this.controller.indentParagraph(1);
           });
 
         // 向左缩进
         Image($r('app.media.indent_left'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canIndentDecrease
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canIndentDecrease ? 1 : 0.4)
+          .enabled(this.controller.canIndentDecrease)
           .onClick(() => {
-            // todo
+            this.controller.indentParagraph(-1);
           });
 
         // 有序列表（数字）
@@ -200,7 +217,7 @@ export struct MemoEditorArea {
           .width(24)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
-            // todo
+            this.controller.applyList(this.getUIContext(), 'ordered-number');
           });
 
         // 有序列表（字母）
@@ -208,7 +225,7 @@ export struct MemoEditorArea {
           .width(24)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
-            // todo
+            this.controller.applyList(this.getUIContext(), 'ordered-letter');
           });
 
         // 无序列表（实心圆）
@@ -216,7 +233,7 @@ export struct MemoEditorArea {
           .width(24)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
-            // todo
+            this.controller.applyList(this.getUIContext(), 'unordered-bullet');
           });
 
         // 无序列表（方块）
@@ -224,7 +241,7 @@ export struct MemoEditorArea {
           .width(24)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
-            // todo
+            this.controller.applyList(this.getUIContext(), 'unordered-square');
           });
       }
       .width('100%')
@@ -327,6 +344,9 @@ export struct MemoEditorArea {
           .width(20)
           .fillColor(COLOR_LIST[this.controller.colorIdx])
           .onClick(() => {
+            // 先把"光标所在段落能不能缩进"算出来 —— 弹窗一开，编辑器就被遮住、光标不再移动，
+            // 这里是判断"当前段落是谁"最可靠的时机（详见 refreshParagraphButtonState 的注释）
+            this.controller.refreshParagraphButtonState();
             this.getUIContext()
               .getPromptAction()
               .openCustomDialog({
@@ -780,6 +800,13 @@ export struct MemoEditorArea {
             // 待办勾选框被点中后，等光标落定再判定点的是哪一张（见 onTodoMarkTap 的注释）
             .onSelectionChange((range: RichEditorRange) => {
               this.controller.onSelectionChange(range);
+              // 样式弹窗开着时兜底重算缩进按钮的可用性。
+              // 正常情况弹窗会挡住编辑器、光标动不了，所以这条几乎不触发；
+              // 但万一弹窗没挡住，它能保证置灰状态不会滞后。**弹窗关着时不做** ——
+              // 这个计算要一次 getParagraphs + 一次全量 getSpans，不能进打字的热路径
+              if (this.styleDialogId >= 0) {
+                this.controller.refreshParagraphButtonState();
+              }
             });
         }
         .width('100%')

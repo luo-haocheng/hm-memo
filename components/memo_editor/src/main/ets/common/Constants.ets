@@ -95,6 +95,15 @@ export const PLAYBACK_DRAIN_TIMEOUT_MS = 1500;
  */
 export const EXPORT_CHUNK_BYTES = 256 * 1024;
 
+/**
+ * 段落缩进的**单级步长**（vp）。
+ * 24vp 约合两个中文字宽 —— 真机实测写 24 回读就是 "24.00vp"，框架没做字体缩放换算。
+ */
+export const INDENT_STEP_VP = 24;
+
+/** 段落缩进的**最大级数**。到顶后「向右缩进」不再生效（按钮不置灰，只是无动作） */
+export const INDENT_MAX_LEVEL = 5;
+
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =
   [$r('sys.color.font_primary'), '#FFFFF200', '#FFFF7F27', '#FFED1C24', '#FFA349A4', '#FF00A2E8', '#FF22B14C'];

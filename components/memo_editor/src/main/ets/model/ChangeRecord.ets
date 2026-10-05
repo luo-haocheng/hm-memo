@@ -1,4 +1,5 @@
 import { image } from '@kit.ImageKit';
+import { ParagraphStyleSnapshot } from './ParagraphStyle';
 
 /**
  * 一个 span 的轻量快照（已经裁剪到变更区间内）
@@ -39,7 +40,7 @@ export interface SpanSnapshot {
  * 记录类型：
  * - `content`   内容增删，撤销 = 删掉对侧范围 + 插回本侧内容
  * - `textStyle` 字符样式（粗体 / 斜体 / 下划线 / 字号 / 颜色），撤销 = 把逐段旧样式应用回原范围
- * - `paragraph` 段落对齐，撤销 = 把逐段旧对齐应用回原范围
+ * - `paragraph` 段落样式（对齐 + 缩进），撤销 = 把逐段旧样式应用回原范围
  *
  * 后两者**不碰内容** —— 段落样式是段落级属性，用"删了重插"会拆开 / 合并段落。
  * 框架不会通知程序化的样式变更（实测 `updateSpanStyle` / `updateParagraphStyle` 不触发内容回调），
@@ -70,11 +71,22 @@ export class ChangeRecord {
   caretAfter: number = 0;
 
   // ==== 样式类记录专用 ====
-  // 应用范围 = [beforeStart, beforeStart + beforeSpans 的总长度)，与内容类复用同一组起点字段；
-  // beforeSpans 里逐段带着各自的 textStyle / paragraphStyle，那就是"旧样式"
+  // `textStyle` 类：应用范围 = [beforeStart, beforeStart + beforeSpans 的总长度)，
+  //   beforeSpans 里逐段带着各自的 textStyle，那就是"旧样式"
+  // `paragraph` 类：范围与逐段样式都在下面两个字段里自带，与 beforeSpans 无关
 
   /** `textStyle` 类：重做时要重新应用的样式（就是 updateTextStyle 收到的那个） */
   afterTextStyle?: RichEditorTextStyle;
-  /** `paragraph` 类：重做时要重新应用的对齐方式 */
-  afterAlign?: TextAlign;
+
+  /**
+   * `paragraph` 类：撤销时逐段还原的段落样式。
+   *
+   * ⚠️ **不要改回"只存一个 afterAlign 标量"** —— 那是个真实的坑，改回去会同时坏两件事：
+   *   ① 只改缩进时 `afterAlign` 是 undefined，重做分支的 `?? TextAlign.Start` 会把段落
+   *      **强制拉回左对齐**，静默毁掉原有的居中 / 右对齐；
+   *   ② 选区跨多段、且各段缩进级别不同时，一个标量根本表达不了逐段结果。
+   */
+  beforeParagraphStyles?: Array<ParagraphStyleSnapshot>;
+  /** `paragraph` 类：重做时逐段还原的段落样式 */
+  afterParagraphStyles?: Array<ParagraphStyleSnapshot>;
 }

@@ -5,6 +5,7 @@ import { uniformTypeDescriptor } from '@kit.ArkData';
 import { FileChipInfo } from './FileChipInfo';
 // 字体权重的反向映射搬到 SpanMapping，与撤销/重做链路共用同一份，避免两份拷贝漂移
 import { fontWeightResult2Value } from './SpanMapping';
+import { normalizeParagraphStyle, paragraphContaining } from './ParagraphStyle';
 // 调色板：用来判断一个色值是"用户选的自定义色"还是"主题色"（见 isPaletteColor）
 import { COLOR_LIST } from '../common/Constants';
 
@@ -196,7 +197,7 @@ export const MAX_IMAGE_SIDE = 2000;
 const JPEG_QUALITY = 85;
 
 // 内置图片的显示尺寸（vp）
-export const BUILTIN_IMAGE_SIZE = 20;
+export const BUILTIN_IMAGE_SIZE = 18;
 
 // 内置图片的右边距（vp）
 const BUILTIN_IMAGE_RIGHT_MARGIN = 4;
@@ -544,7 +545,7 @@ export class Memo {
    *   由 `MemoEditorController.attachmentPathsInOrder()` 负责保证
    */
   async updateContent(spanResult: Array<RichEditorSpan>, uiContext: UIContext,
-    attachmentPaths: Array<string>) {
+    attachmentPaths: Array<string>, paragraphs: Array<RichEditorParagraphResult>) {
     const memoBlockArr: Array<MemoBlock> = [];
     // 下一个待配对的附件下标。这里只按顺序消费，增删由控制器的侧表跟踪
     let attachmentIndex = 0;
@@ -578,7 +579,7 @@ export class Memo {
       // 文本Span信息
       const textSpan = span as RichEditorTextSpanResult;
       if (textSpan.textStyle !== undefined) {
-        memoBlockArr.push(this.mapTextSpan2Block(textSpan));
+        memoBlockArr.push(this.mapTextSpan2Block(textSpan, paragraphs));
         continue;
       }
     }
@@ -920,7 +921,8 @@ export class Memo {
     return this.normalizeColor(color);
   }
 
-  private mapTextSpan2Block(textSpan: RichEditorTextSpanResult): MemoBlock {
+  private mapTextSpan2Block(textSpan: RichEditorTextSpanResult,
+    paragraphs: Array<RichEditorParagraphResult>): MemoBlock {
     // decoration.color 走与 fontColor 相同的归一化：
     // Resource 类型无法还原（返回 undefined，回落默认装饰色），十六进制色值可安全往返
     const sourceDecoration = textSpan.textStyle.decoration;
@@ -929,13 +931,21 @@ export class Memo {
       color: this.normalizeColor(sourceDecoration.color),
     } : undefined;
 
-    // paragraphStyle 只搬运明确支持的字段，不整体拷贝：
-    // 编辑器填充的其它字段（如 leadingMargin，其 LeadingMarginPlaceholder 内含 PixelMap）
-    // 一旦被写进 KV 就无法还原，甚至可能让 JSON.stringify 抛异常导致整次保存静默失败
-    const sourceParagraph = textSpan.paragraphStyle;
-    const paragraphStyle: RichEditorParagraphStyle | undefined = sourceParagraph ? {
-      textAlign: sourceParagraph.textAlign
-    } : undefined;
+    // paragraphStyle 只搬运明确支持的字段，**逐字段取值**，不整体拷贝：
+    // 编辑器填充的其它字段（尤其 leadingMargin 的 `LeadingMarginPlaceholder`，内含 PixelMap）
+    // 一旦被写进 KV 就无法还原，甚至可能让 JSON.stringify 抛异常导致整次保存静默失败。
+    //
+    // ⚠️ **缩进不能从 `textSpan.paragraphStyle` 里取**：真机实测它回读的是
+    // `placeholder(size=undefined)`，尺寸被抹掉了；只有 `getParagraphs()` 报的是
+    // `placeholder(size=["24.00vp","0.00vp"])`。所以这里查的是传进来的段落信息，
+    // 再由 `normalizeParagraphStyle` 把它换算成**纯数值**（JSON 安全）。
+    const paragraph = paragraphContaining(paragraphs, textSpan.spanPosition.spanRange[0]);
+    const normalized = normalizeParagraphStyle(paragraph?.style);
+    const paragraphStyle: RichEditorParagraphStyle | undefined =
+      (normalized.textAlign !== undefined || normalized.leadingMargin !== undefined) ? {
+        textAlign: normalized.textAlign,
+        leadingMargin: normalized.leadingMargin,
+      } : undefined;
 
     return {
       type: 'text',

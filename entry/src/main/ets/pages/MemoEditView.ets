@@ -110,10 +110,14 @@ struct MemoEditView {
     }
 
     const spanResult = this.editorController.contentController.getSpans();
+    // 段落信息必须**另取一份**：`getSpans()` 回读的段落样式丢了 `leadingMargin` 的尺寸
+    //（真机实测报的是 `placeholder(size=undefined)`），只有 `getParagraphs()` 带实际值，
+    // 缩进才能落盘。参数必须是 `{}` 而不是省略 —— 不传它返回 undefined。
+    const paragraphs = this.editorController.contentController.getParagraphs({});
     // 附件按文档顺序的相对路径。chip 的 span 里没有文件名，只能由控制器的侧表提供；
     // 这一步同时会把侧表的 offset 与编辑器真实状态对齐（见 attachmentPathsInOrder）
     await this.currentMemo.updateContent(spanResult, this.uiContext,
-      this.editorController.attachmentPathsInOrder());
+      this.editorController.attachmentPathsInOrder(), paragraphs);
     this.currentMemo.description = contentStr;
     this.currentMemo.title = this.memoTitle;
     // 手写笔迹与正文分开存一个文件，文件名记在 Memo.inkFile 上。

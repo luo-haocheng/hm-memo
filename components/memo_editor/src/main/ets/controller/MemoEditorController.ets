@@ -23,11 +23,32 @@ import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
 import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
+import {
+  indentLevelOf,
+  indentMarginFor,
+  isStartAligned,
+  mergeParagraphStyle,
+  normalizeParagraphStyle,
+  ParagraphStyleSnapshot
+} from '../model/ParagraphStyle';
+import {
+  buildCharMap,
+  isOrdered,
+  ListKind,
+  ListMarkerHit,
+  lineTextAt,
+  markerOf,
+  markerText,
+  NON_TEXT_SENTINEL,
+  previousLineText,
+  textInRange
+} from '../model/ListMarker';
 import { display } from '@kit.ArkUI';
 import {
   AUDIO_BYTES_PER_MS,
   COLOR_LIST,
   DEFAULT_FONT_SIZE,
+  INDENT_MAX_LEVEL,
   RECORD_BAR_COUNT,
   RECORD_BYTES_PER_FRAME,
   RECORD_LEVEL_DECAY
@@ -315,6 +336,27 @@ export class MemoEditorController {
   @Trace fontSize: number = DEFAULT_FONT_SIZE;
   // 当前段落对齐样式
   @Trace alignStyle: TextAlign = TextAlign.Start;
+
+  /**
+   * 光标 / 选区当前能不能**左**缩进（样式弹窗据此把「向左缩进」置灰）。
+   *
+   * 判据与 `indentParagraph` 实际会不会生效**完全同源**：只要选区里有**一段**
+   * 是普通段落、对齐为 Start、且缩进级别 > 0，就为 true。
+   * 多段选区时逐按钮判定，而不是用一个总的"可缩进"开关 ——
+   * 选了一串不同层级的列表行时，两个方向的可用性本来就可能不同。
+   */
+  @Trace canIndentDecrease: boolean = false;
+
+  /** 光标 / 选区当前能不能**右**缩进（样式弹窗据此把「向右缩进」置灰） */
+  @Trace canIndentIncrease: boolean = false;
+
+  /**
+   * 光标 / 选区当前能不能改**段落对齐**（样式弹窗据此把三个对齐按钮一起置灰）。
+   *
+   * 判据与 `setParagraphAlign` 会不会生效同源：只要选区里有**一段**可对齐的段落就为 true。
+   * 对齐是"整段一个值"，所以三个按钮共用一个开关，不逐值判定。
+   */
+  @Trace canSetAlign: boolean = false;
   // 指向当前生效的历史记录下标。0 是"初始基线"，不可撤销回去
   @Trace currRecordIdx: number = -1;
   // 历史长度：单独暴露给 UI，驱动重做按钮的灰显
@@ -750,6 +792,8 @@ export class MemoEditorController {
     // 先插再扫，坐标才对得上
     if (enterOffset >= 0) {
       this.continueTodoParagraph(enterOffset);
+      // 列表续接排在待办之后：它会先看上一段是不是待办，是就让位（段首标记槽单占）
+      this.continueListParagraph(enterOffset, uiContext);
     }
     const rangeStart = rangeAfter.start ?? 0;
     const rangeEnd = rangeAfter.end ?? 0;
@@ -814,12 +858,34 @@ export class MemoEditorController {
   private buildParagraphFix(offset: number, refPosition: number,
     spans: Array<RichEditorSpan>, uiContext: UIContext): ParagraphFix {
     const refSpan = textSpanAt(spans, refPosition);
-    const refParagraph = refSpan ? refSpan.paragraphStyle : undefined;
     return {
       offset: offset,
       style: refSpan ? textStyleResult2Style(refSpan.textStyle) : this.effectiveTypingStyle(uiContext),
-      paragraphStyle: refParagraph ? { textAlign: refParagraph.textAlign } : undefined,
+      paragraphStyle: this.paragraphStyleForBreak(refPosition, refSpan ? refSpan.paragraphStyle : undefined),
     };
+  }
+
+  /**
+   * 补换行时要带的段落样式（只留对齐 + 缩进两个字段）。
+   *
+   * 【为什么不能直接用 span 上的 `paragraphStyle`】真机实测：`getSpans()` 回读的
+   * `paragraphStyle.leadingMargin` 是 `placeholder(size=undefined)` —— **尺寸被抹掉了**。
+   * 照搬会让"在缩进段落里插图 / 补换行"把缩进抹平。所以要回到 `getParagraphs()`
+   * 取该段**当前生效**的完整样式（只有它带实际尺寸）。
+   *
+   * `getParagraphs()` 取不到时回落到 span 上那份（至少保住对齐）。
+   */
+  private paragraphStyleForBreak(position: number,
+    fallback: RichEditorParagraphStyle | undefined): RichEditorParagraphStyle | undefined {
+    const current = this.readParagraphStyleAt(position);
+    if (current !== undefined) {
+      const normalized = mergeParagraphStyle(undefined, current);
+      if (normalized.textAlign !== undefined || normalized.leadingMargin !== undefined) {
+        return normalized;
+      }
+      return undefined;
+    }
+    return fallback !== undefined ? { textAlign: fallback.textAlign } : undefined;
   }
 
   /**
@@ -1119,16 +1185,10 @@ export class MemoEditorController {
       return;
     }
     if (record.kind === 'paragraph') {
-      const rangeLength = spansTotalLength(record.beforeSpans);
-      if (useBefore) {
-        this.applyParagraphAligns(record.beforeSpans, record.beforeStart);
-      } else {
-        this.contentController.updateParagraphStyle({
-          style: { textAlign: record.afterAlign ?? TextAlign.Start },
-          start: record.beforeStart,
-          end: record.beforeStart + rangeLength,
-        });
-      }
+      // 撤销 / 重做走**同一条路径**，只是取哪一侧的快照不同。
+      // 这里刻意不再有 `?? TextAlign.Start` 那种默认值 —— 只改缩进的记录里对齐是 undefined，
+      // 填个默认值会在重做时把段落静默拉回左对齐。
+      this.applyParagraphStyles(useBefore ? record.beforeParagraphStyles : record.afterParagraphStyles);
       return;
     }
 
@@ -1160,29 +1220,50 @@ export class MemoEditorController {
     }
   }
 
-  /** 逐段把快照里的旧对齐应用回去 */
-  private applyParagraphAligns(spans: Array<SpanSnapshot>, start: number) {
-    let cursor = start;
-    for (const span of spans) {
-      const align = span.paragraphStyle?.textAlign;
-      if (span.kind === 'text' && align !== undefined) {
+  /**
+   * 逐段把快照里的段落样式应用回去（撤销与重做共用）。
+   *
+   * 【为什么要整段写全、不能只写变化的那一个字段】`updateParagraphStyle` 是**整体替换**语义
+   *（真机实测：只传 `textAlign` 会把 `leadingMargin` 冲回 `["0.00px","0.00px"]`）。
+   * 所以每段都要把「对齐 + 缩进」一次写全；`leadingMargin` 即使为 0 也显式给 0。
+   *
+   * 范围直接取快照里存的 —— 样式操作不改内容，这些范围在整个历史里都有效。
+   */
+  private applyParagraphStyles(snapshots: Array<ParagraphStyleSnapshot> | undefined) {
+    if (snapshots === undefined) {
+      return;
+    }
+    for (const snapshot of snapshots) {
+      // 刻意**不给 textAlign 兜底默认值**：只改缩进的那条记录里对齐本就该按快照原样还原，
+      // 填一个 `?? TextAlign.Start` 会在快照缺该字段时把段落静默拉回左对齐
+      //（这正是重构前 `afterAlign ?? TextAlign.Start` 的毛病）。
+      // 整体替换语义下，字段缺省 = 用框架默认值，与"本就没有对齐"是同一结果。
+      const style: RichEditorParagraphStyle = {
+        textAlign: snapshot.style.textAlign,
+        leadingMargin: snapshot.style.leadingMargin ?? 0,
+      };
+      try {
         this.contentController.updateParagraphStyle({
-          style: { textAlign: align },
-          start: cursor,
-          end: cursor + span.length,
+          style: style,
+          start: snapshot.start,
+          end: snapshot.end,
         });
+      } catch (error) {
+        console.error(`[undo] 还原段落样式失败: ${JSON.stringify(error)}`);
       }
-      cursor += span.length;
     }
   }
 
   /**
-   * 构造一条样式类记录：把 [start, end) 区间内**逐段**的现有样式抓下来作为"旧样式"。
+   * 构造一条**字符样式**记录：把 [start, end) 区间内逐段的现有样式抓下来作为"旧样式"。
    *
    * 必须逐段抓 —— 比如选中的一半是粗体一半是正常体，撤销要还原成"混合"状态，
    * 统一的样式表达不了。
+   *
+   * （段落类记录不走这里：`getSpans()` 回读的段落样式丢了 `leadingMargin` 的尺寸，
+   *   段落快照由 `applyParagraphStyleToParagraphs` 单独抓，见 `ParagraphStyleSnapshot`。）
    */
-  private buildStyleRecord(kind: 'textStyle' | 'paragraph', start: number, end: number): ChangeRecord {
+  private buildStyleRecord(kind: 'textStyle', start: number, end: number): ChangeRecord {
     const record = new ChangeRecord();
     record.kind = kind;
     record.beforeStart = start;
@@ -1883,25 +1964,322 @@ export class MemoEditorController {
   }
 
   /**
-   * 设置段落对齐方式
+   * 取选区覆盖到的段落，按文档顺序。
+   *
+   * ⚠️ `start` / `end` 必须是**选区的原始端点**，不能传"由 `getParagraphRange` 换算出来的
+   * 段落边界"。后者是 `last.range[1]`，而相邻下一段的 `range[0]` **恰好等于**它，
+   * 判据 `range[0] <= end` 就会把**下一段也圈进来** —— 表现为"只缩进光标所在的一段，
+   * 下一段跟着一起缩进"。
+   *
+   * 选取口径与 `getParagraphRange` 同源（端点归后一段）：取 "range[0] <= start 的最后一段"
+   * 到 "range[0] <= end 的最后一段"之间的全部段落。两者必须一致，否则记录的段数
+   * 与实际被改的段数会漂移。
+   *
+   * 【为什么必须走 getParagraphs()】它是**唯一**能读到 `leadingMargin` 实际尺寸的接口 ——
+   * `getSpans()` 回读的段落样式里尺寸是 undefined（真机实测，见 ParagraphStyle.ets 文件头）。
    */
-  updateParagraphStyle(paragraphStyle: RichEditorParagraphStyle) {
-    // 获取选中内容的范围
+  private paragraphsInRange(start: number, end: number): Array<RichEditorParagraphResult> {
+    let paragraphs: Array<RichEditorParagraphResult>;
+    try {
+      paragraphs = this.contentController.getParagraphs({});
+    } catch (error) {
+      console.error(`Failed to invoke getParagraphs. Cause: ${JSON.stringify(error)}`);
+      return [];
+    }
+    let firstIdx = -1;
+    let lastIdx = -1;
+    for (let i = 0; i < paragraphs.length; i++) {
+      if (paragraphs[i].range[0] <= start) {
+        firstIdx = i;
+      }
+      if (paragraphs[i].range[0] <= end) {
+        lastIdx = i;
+      }
+    }
+    if (lastIdx < 0) {
+      return [];
+    }
+    if (firstIdx < 0) {
+      firstIdx = lastIdx;
+    }
+    return paragraphs.slice(firstIdx, lastIdx + 1);
+  }
+
+  /** position 所在段落的**当前生效**样式（带 leadingMargin 的实际尺寸）；取不到返回 undefined */
+  private readParagraphStyleAt(position: number): RichEditorParagraphStyle | undefined {
+    const paragraphs = this.paragraphsInRange(position, position);
+    return paragraphs.length > 0 ? paragraphs[0].style : undefined;
+  }
+
+  /**
+   * 设置段落对齐（样式弹窗里那三个对齐按钮走这里）。
+   *
+   * 【需求①：只有**普通段落**与**相册照片段落**能改对齐】附件 chip 与列表段落
+   *（无序 / 有序 / 待办）都不能 —— 它们的排版由自身结构决定，改对齐没有意义。
+   * 不满足的段落由 `isAlignableParagraph` 挡下，**原样返回**（不写样式、也不进历史）。
+   *
+   * 【需求②：改成任何一种对齐（包括改回 Start）都直接清除缩进】所以显式带
+   * `leadingMargin: 0`，而不是靠 `mergeParagraphStyle` 把旧缩进保留下来 ——
+   * 不传的话 0 不生效，缩进会跟着对齐一起留下来。
+   * 与"只有 Start 才允许缩进"合起来，一段文字的排版只有两种合法形态：
+   * 「Start + 任意缩进」或「居中 / 右对齐 + 无缩进」。
+   *
+   * ⚠️ **框架的 `updateParagraphStyle` 是「整体替换」而非「部分更新」**（真机实测：写完
+   * `leadingMargin=24` 之后再单独写一次 `textAlign`，缩进就变回 `["0.00px","0.00px"]`）。
+   * 所以每段都要写一份**完整**样式，漏字段就会被重置。
+   *
+   * 逐段处理而不是丢一个并集范围：选区里各段的当前样式可能不同，
+   * 统一写同一个值会把它们的相对层次拍平，且一个标量也记录不下来。
+   */
+  setParagraphAlign(textAlign: TextAlign) {
+    // 工具栏的"上次点了哪个"跟随本次点击
+    this.alignStyle = textAlign;
+    // 选中内容的范围。**直接把选区端点交给 paragraphsInRange**，不要先经 getParagraphRange
+    // 换算成段落边界 —— 那样会多圈进下一段（见 paragraphsInRange 的告警）
     const selection = this.contentController.getSelection();
-    // 当未选中内容时，计算当前段落起始范围
-    const pRange = this.getParagraphRange(selection.selection[0] ?? 0, selection.selection[1] ?? 0);
-    const pStart = pRange.start ?? 0;
-    const pEnd = pRange.end ?? 0;
-    // 同 updateTextStyle：框架不通知，手动记录被改段落原有的对齐方式
-    const record = this.buildStyleRecord('paragraph', pStart, pEnd);
-    record.afterAlign = paragraphStyle.textAlign;
-    // 获取指定范围的段落信息
-    this.contentController.updateParagraphStyle({
-      style: paragraphStyle,
-      start: pStart,
-      end: pEnd,
-    });
+    const selStart = selection.selection[0] ?? 0;
+    const selEnd = selection.selection[1] ?? 0;
+    const paragraphs = this.paragraphsInRange(selStart, selEnd);
+    if (paragraphs.length === 0) {
+      return;
+    }
+    const spans = this.contentController.getSpans();
+    const chars = buildCharMap(spans);
+    this.applyParagraphStyleToParagraphs(
+      paragraphs,
+      (current, paragraph) => {
+        if (!this.isAlignableParagraph(paragraph, chars, spans)) {
+          return current;
+        }
+        return mergeParagraphStyle(current, { textAlign: textAlign, leadingMargin: 0 });
+      },
+      paragraphs[0].range[0]);
+    // 对齐变了 ⇒ 缩进被清零、"对齐是否 Start"也可能变，两个缩进按钮的可用性要跟着重算
+    this.refreshParagraphButtonState();
+  }
+
+  /**
+   * 把 `resolve` 算出的新样式**逐段**应用，并记入历史。
+   *
+   * 返回是否真的改变了什么；全都没变时不产生历史记录（点了没反应的按钮不该占一格撤销）。
+   */
+  private applyParagraphStyleToParagraphs(
+    paragraphs: Array<RichEditorParagraphResult>,
+    resolve: (current: RichEditorParagraphStyle, paragraph: RichEditorParagraphResult) => RichEditorParagraphStyle,
+    recordStart: number): boolean {
+    if (paragraphs.length === 0) {
+      return false;
+    }
+    const before: ParagraphStyleSnapshot[] = [];
+    const after: ParagraphStyleSnapshot[] = [];
+    let changed = false;
+    for (const paragraph of paragraphs) {
+      const paragraphStart = paragraph.range[0];
+      const paragraphEnd = paragraph.range[1];
+      const currentStyle = paragraph.style;
+      before.push({
+        start: paragraphStart,
+        end: paragraphEnd,
+        style: normalizeParagraphStyle(currentStyle),
+      });
+      const next = resolve(currentStyle, paragraph);
+      const nextSnapshot = normalizeParagraphStyle(next);
+      after.push({ start: paragraphStart, end: paragraphEnd, style: nextSnapshot });
+      if (JSON.stringify(nextSnapshot) === JSON.stringify(normalizeParagraphStyle(currentStyle))) {
+        // 这一段没变化，不要白发一次 updateParagraphStyle
+        continue;
+      }
+      changed = true;
+      try {
+        this.contentController.updateParagraphStyle({
+          style: next,
+          start: paragraphStart,
+          end: paragraphEnd,
+        });
+      } catch (error) {
+        console.error(`Failed to updateParagraphStyle. Cause: ${JSON.stringify(error)}`);
+      }
+    }
+    if (!changed) {
+      return false;
+    }
+    // 框架不会通知程序化的样式变更（实测 updateParagraphStyle 不触发内容回调），必须手动记录
+    const record = new ChangeRecord();
+    record.kind = 'paragraph';
+    record.beforeStart = recordStart;
+    record.beforeParagraphStyles = before;
+    record.afterParagraphStyles = after;
     this.pushRecord(record);
+    return true;
+  }
+
+  /**
+   * 调整光标 / 选区所在段落的缩进级别。
+   *
+   * delta 为 ±1。**逐段各自算** —— 选区里各段的级别可能不同（比如选了一串不同层次的列表行），
+   * 按同一个"总级别"写会把它们的相对层次拍平。
+   * 到顶（`INDENT_MAX_LEVEL`）或到底（0）的那一段不动；所有段都没变则不产生历史记录。
+   */
+  indentParagraph(delta: number) {
+    const selection = this.contentController.getSelection();
+    const selStart = selection.selection[0] ?? 0;
+    const selEnd = selection.selection[1] ?? 0;
+    const paragraphs = this.paragraphsInRange(selStart, selEnd);
+    if (paragraphs.length === 0) {
+      return;
+    }
+    // 建**一次**坐标表：判断"这一段是不是普通段落"（有没有图片 / 是不是列表行）要看它。
+    // 点按钮才走这里，全量一次可以接受
+    const chars = buildCharMap(this.contentController.getSpans());
+    this.applyParagraphStyleToParagraphs(
+      paragraphs,
+      (current, paragraph) => {
+        // 需求：**缩进只对普通段落生效** —— 图片 / 附件 / 待办勾选框 / 列表段落一律跳过
+        if (!this.isIndentableParagraph(paragraph, chars)) {
+          return current;
+        }
+        // 需求：只有对齐为 Start 的段落才允许调整缩进
+        if (!isStartAligned(current)) {
+          return current;
+        }
+        // 上面的 return current 即"这段没变化"，applyParagraphStyleToParagraphs 会跳过它、
+        // 也不产生历史；整个选区都不满足时，这次点击就是纯粹的无动作
+        const currentLevel = indentLevelOf(current);
+        const nextLevel = Math.max(0, Math.min(INDENT_MAX_LEVEL, currentLevel + delta));
+        return mergeParagraphStyle(current, { leadingMargin: indentMarginFor(nextLevel) });
+      },
+      paragraphs[0].range[0]);
+    // 级别变了，按钮可用性跟着变（到顶 / 到底要立刻置灰）
+    this.refreshParagraphButtonState();
+  }
+
+  /**
+   * 这一段能不能调缩进 —— 只有"普通段落"可以。
+   *
+   * 排除三类：
+   *   - **图片**（相册照片）与**附件 chip**：它们各自独占一段，有自己的排版语义
+   *   - **待办勾选框**：勾选框是行内图，所在的段落也归"待办段落"
+   *   - **有序 / 无序列表**：以列表标记开头的段落
+   *
+   * 【为什么从 `start - 1` 开始扫】段落以行内图（勾选框 / 照片 / chip）开头时，
+   * `getParagraphs()` 报的段首落在图片【之后】—— 那一格在 `start` 左边，只扫 `[start, end)`
+   * 会漏掉它。而正常段落里 `start - 1` 是上一段末尾的换行，不是哨兵，不会误判。
+   */
+  private isIndentableParagraph(paragraph: RichEditorParagraphResult, chars: string[]): boolean {
+    const start = paragraph.range[0];
+    const end = paragraph.range[1];
+    for (let i = Math.max(0, start - 1); i < end; i++) {
+      if (chars[i] === NON_TEXT_SENTINEL) {
+        return false;
+      }
+    }
+    // 以列表标记开头 ⇒ 列表段落
+    return markerOf(lineTextAt(chars, start)) === undefined;
+  }
+
+  /**
+   * 这一段能不能改**段落对齐**。
+   *
+   * ⚠️ **口径与 `isIndentableParagraph` 不同，不要合并成一个判据**：
+   *   - 缩进：只有**普通段落**可以（图片 / 附件 / 待办 / 列表全不行）
+   *   - 对齐：**普通段落 + 相册照片段落**可以；**附件 chip 与列表段落（含待办）**不行
+   * 也就是对齐比缩进**多放行"相册照片段落"**一类 —— 照片独占一段，把整段居中 / 右对齐是有意义的；
+   * 而缩进对照片没有意义（它没有"行首"）。
+   *
+   * 排除的三种都得靠 span 判，光看坐标字符表只能知道"这里是个非文本单元"，分不出是哪一种。
+   */
+  private isAlignableParagraph(paragraph: RichEditorParagraphResult,
+    chars: string[], spans: Array<RichEditorSpan>): boolean {
+    const start = paragraph.range[0];
+    const end = paragraph.range[1];
+    // 列表段落（无序 / 有序）不行
+    if (markerOf(lineTextAt(chars, start)) !== undefined) {
+      return false;
+    }
+    // 从 start - 1 起扫：段首是行内图（勾选框 / 照片 / chip）时，
+    // getParagraphs() 报的段首落在图片【之后】，那一格在 start 左边
+    const from = Math.max(0, start - 1);
+    for (const span of spans) {
+      const range = span.spanPosition.spanRange;
+      if (range[1] <= from || range[0] >= end) {
+        continue;
+      }
+      if (isBuilderSpan(span)) {
+        return false; // 附件 chip
+      }
+      const name = builtinImageNameOf(span);
+      if (name !== undefined && toggledTodoMark(name) !== undefined) {
+        return false; // 待办勾选框
+      }
+      // 相册照片（isBuilderSpan 已排除）与普通文字都放行
+    }
+    return true;
+  }
+
+  /**
+   * 重算段落按钮的可用性：两个缩进按钮 + 三个对齐按钮（工具栏置灰用）。
+   *
+   * 【什么时候必须调】
+   *   - 样式弹窗**打开时**：这是"当前段落是谁"最可靠的时机
+   *   - 每次改完段落样式之后（缩进 / 对齐）：改了就会变，不重算按钮状态会滞后一拍
+   *   - 弹窗开着时光标移动（见组件里 `onSelectionChange` 的守卫）
+   *
+   * 【为什么不挂在每次光标移动上】这里要一次 `getParagraphs()` + 一次**全量** `getSpans()`，
+   * 而 `onSelectionChange` 在打字时每敲一个字都会触发 —— 放进那条热路径代价太大。
+   * 弹窗打开时编辑器被遮住、光标动不了，前两个时机已经够了；第三个是兜底。
+   *
+   * 判据与 `indentParagraph` / `setParagraphAlign` 里的逐段判断**逐字对应**，
+   * 避免"看着能点、点了没反应"。注意两者口径**不同**（对齐多放行相册照片段落）。
+   */
+  refreshParagraphButtonState() {
+    this.canIndentDecrease = false;
+    this.canIndentIncrease = false;
+    this.canSetAlign = false;
+    const caret = this.contentController.getCaretOffset();
+    if (caret < 0) {
+      // 编辑器没获焦 / 拿不到光标 ⇒ 没有"当前段落"，全部不可用
+      return;
+    }
+    const selection = this.contentController.getSelection();
+    const selStart = selection.selection[0];
+    const selEnd = selection.selection[1];
+    if (selStart === undefined || selEnd === undefined || selStart < 0) {
+      return;
+    }
+    let paragraphs: Array<RichEditorParagraphResult>;
+    let spans: Array<RichEditorSpan>;
+    try {
+      paragraphs = this.paragraphsInRange(selStart, selEnd);
+      if (paragraphs.length === 0) {
+        return;
+      }
+      spans = this.contentController.getSpans();
+    } catch (error) {
+      console.error(`[align] 计算段落按钮可用性失败: ${JSON.stringify(error)}`);
+      return;
+    }
+    const chars = buildCharMap(spans);
+    let canDecrease = false;
+    let canIncrease = false;
+    let canAlign = false;
+    for (const paragraph of paragraphs) {
+      if (this.isAlignableParagraph(paragraph, chars, spans)) {
+        canAlign = true;
+      }
+      if (!this.isIndentableParagraph(paragraph, chars) || !isStartAligned(paragraph.style)) {
+        continue;
+      }
+      const level = indentLevelOf(paragraph.style);
+      if (level > 0) {
+        canDecrease = true;
+      }
+      if (level < INDENT_MAX_LEVEL) {
+        canIncrease = true;
+      }
+    }
+    this.canIndentDecrease = canDecrease;
+    this.canIndentIncrease = canIncrease;
+    this.canSetAlign = canAlign;
   }
 
   /**
@@ -1973,12 +2351,22 @@ export class MemoEditorController {
    * 拿它去判"段首有没有勾选框"必然落空。所以还得往回看一格。
    */
   private paragraphStartAt(position: number): number {
+    return this.paragraphBoundsAt(position).start ?? position;
+  }
+
+  /**
+   * position 所在段落的 [起, 止)。起点已按上一条注释的怪癖回退过。
+   *
+   * 段尾也一并给出，供调用方做**有界读取**（只读这一段，不必扫全篇）。
+   */
+  private paragraphBoundsAt(position: number): RichEditorRange {
     const range = this.getParagraphRange(position, position);
     const start = range.start ?? position;
+    const end = range.end ?? position;
     if (start > 0 && this.todoMarkAt(start - 1) !== undefined) {
-      return start - 1;
+      return { start: start - 1, end: end };
     }
-    return start;
+    return { start: start, end: end };
   }
 
   /**
@@ -2031,6 +2419,17 @@ export class MemoEditorController {
     // 段首已经有勾选框就不重复插，免得变成「○○ 买牛奶」
     if (this.todoMarkAt(paragraphStart) !== undefined) {
       return;
+    }
+    // 段首标记槽**单占**：已经在列表里就不再插勾选框。
+    // 否则会插出 `[勾选框]1. foo` 这种复合标记，而它会让两个"回车续接"逻辑
+    //（continueTodoParagraph / continueListParagraph）在同一个新段落上叠加，行为无法推理
+    try {
+      const chars = buildCharMap(this.contentController.getSpans());
+      if (this.listMarkerAt(paragraphStart, chars) !== undefined) {
+        return;
+      }
+    } catch (error) {
+      console.error(`[list] 检查段首列表标记失败: ${JSON.stringify(error)}`);
     }
     const resource = builtinImageResource(TODO_MARK_OPEN);
     if (!resource) {
@@ -2236,6 +2635,242 @@ export class MemoEditorController {
     }
   }
 
+  // ==================== 列表 ====================
+  //
+  // 【为什么是文本前缀】RichEditor 没有任何原生列表 API（真机探针确认段落样式只有
+  // textAlign / leadingMargin / wordBreak）。所以标记就是**真实文本**：`"1. "` / `"• "` 等。
+  // 代价是它会进正文、会被复制；换来的是**撤销与持久化零改动** —— 内容变更天然被
+  // `onWillChange` 捕获进历史、被 `updateContent` 采集落盘。
+  //
+  // 【段首标记槽是单占的】**待办勾选框优先**：一个段落要么以勾选框开头，要么以列表标记开头，
+  // 不会两者兼有。三处守卫共同保证：`insertTodoMark` 见列表标记就退、`applyList` 见图片就退、
+  // `continueListParagraph` 见勾选框就退。若允许并存，`[勾选框]1. foo` 这种复合标记会让
+  // `continueTodoParagraph` 与 `continueListParagraph` 在同一个新段落上叠加，行为无法推理。
+
+  /**
+   * 当前光标段落是不是一个列表项；是则返回它的标记信息。
+   *
+   * 段首是图片（勾选框 / 相册照片 / 附件 chip）时返回 undefined —— 标记槽单占，
+   * 那里不该有列表标记，也不该被当成列表段落。
+   *
+   * `chars` 由调用方传入：一张坐标字符表是 O(文档长) 的 `getSpans()`，
+   * 而调用方往往紧接着还要用它算序号 / 判空项，不该白扫第二遍。
+   */
+  private listMarkerAt(paragraphStart: number, chars: string[]): ListMarkerHit | undefined {
+    if (paragraphStart < 0) {
+      return undefined;
+    }
+    // getParagraphs() 报的段首会落在"段首是行内图"的图片【之后】，
+    // 所以前一格是图片时，这一段其实是"以图开头"，不是列表段落
+    if (chars[paragraphStart] === NON_TEXT_SENTINEL
+      || (paragraphStart > 0 && chars[paragraphStart - 1] === NON_TEXT_SENTINEL)) {
+      return undefined;
+    }
+    return markerOf(lineTextAt(chars, paragraphStart));
+  }
+
+  /** 取 position 处文本 span 的**实际渲染**样式（`addTextSpan` 不缩放，所以这个值可以直接回传） */
+  private textStyleAtPosition(position: number): RichEditorTextStyle | undefined {
+    try {
+      const spans = this.contentController.getSpans({ start: position, end: position + 1 });
+      for (const span of spans) {
+        if (isTextLikeSpan(span)) {
+          return textStyleResult2Style((span as RichEditorTextSpanResult).textStyle);
+        }
+      }
+    } catch (error) {
+      console.error(`[list] 读取文本样式失败: ${JSON.stringify(error)}`);
+    }
+    return undefined;
+  }
+
+  /**
+   * 在 offset 处插入列表标记文本。
+   *
+   * 样式取该处文本 span 的实际渲染样式（`addTextSpan` 写入的值不缩放，回传渲染值才能与正文一致）；
+   * 空段落取不到时回落输入样式。`paragraphStyle` 一并带上 —— 探针显示它对**已有**段落是空操作，
+   * 但带上没有代价，能避免"插入点恰在段落边界时把段落样式重置"这类未验证的风险。
+   */
+  private insertMarkerText(offset: number, text: string, uiContext: UIContext) {
+    const style = this.textStyleAtPosition(offset) ?? this.effectiveTypingStyle(uiContext);
+    try {
+      this.contentController.addTextSpan(text, {
+        offset: offset,
+        style: style,
+        paragraphStyle: this.paragraphStyleForBreak(offset, undefined),
+      });
+    } catch (error) {
+      console.error(`[list] 插入列表标记失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  /** 摘掉 [offset, offset + length) 处的列表标记 */
+  private removeListMarkerAt(offset: number, length: number) {
+    try {
+      this.contentController.deleteSpans({ start: offset, end: offset + length });
+    } catch (error) {
+      console.error(`[list] 移除列表标记失败: ${JSON.stringify(error)}`);
+    }
+  }
+
+  /**
+   * 新条目的序号：只看**紧邻前一行**。
+   *
+   * 由"不回溯重排"这个已定决策推出来的 —— 既然删掉中间一条时后面的编号不动，
+   * 编号就不该由"扫连续段落"推算（那会和已有编号打架）；上一行是同类的有序列表就 +1，
+   * 否则从 1 重新开始。无序列表不看序号，恒为 1。
+   */
+  private nextListOrdinal(kind: ListKind, chars: string[], paragraphStart: number): number {
+    if (!isOrdered(kind)) {
+      return 1;
+    }
+    const previous = previousLineText(chars, paragraphStart);
+    if (previous === undefined) {
+      return 1;
+    }
+    const previousMarker = markerOf(previous);
+    if (previousMarker === undefined || previousMarker.kind !== kind) {
+      return 1;
+    }
+    return (previousMarker.ordinal ?? 0) + 1;
+  }
+
+  /**
+   * 工具栏的四个列表按钮。
+   *
+   * 同一种列表再点一次 = **取消列表**；换一种 = 摘掉旧标记再插新的。
+   */
+  applyList(uiContext: UIContext, kind: ListKind) {
+    const caret = this.contentController.getCaretOffset();
+    if (caret < 0) {
+      return;
+    }
+    const paragraphStart = this.paragraphStartAt(caret);
+    const chars = buildCharMap(this.contentController.getSpans());
+    // 段首标记槽**单占**：那里已经是图片（待办勾选框 / 相册照片 / 附件 chip）时不插列表标记。
+    // 必须显式挡在这里 —— `listMarkerAt` 对这种情况返回 undefined，而 undefined 在下文
+    // 被当作"没有标记、可以插"，于是会插出 `1. ☐买牛奶` 这种复合标记，
+    // 接着 onDidChange 的图片维护又会去拆段。照片 / chip 的段落同理。
+    if (chars[paragraphStart] === NON_TEXT_SENTINEL
+      || (paragraphStart > 0 && chars[paragraphStart - 1] === NON_TEXT_SENTINEL)) {
+      return;
+    }
+    const existing = this.listMarkerAt(paragraphStart, chars);
+    if (existing !== undefined && existing.kind === kind) {
+      // 再点一次同一种 = 取消
+      this.replaceListPrefix(paragraphStart, existing.text.length, '', caret, uiContext);
+      return;
+    }
+    const text = markerText(kind, this.nextListOrdinal(kind, chars, paragraphStart));
+    this.replaceListPrefix(paragraphStart, existing === undefined ? 0 : existing.text.length,
+      text, caret, uiContext);
+  }
+
+  /**
+   * 把段首的旧前缀（长度 `oldLength`，可为 0）换成 `newText`（可为空串），并**校正光标**。
+   *
+   * 【为什么必须自己校正光标】`deleteSpans` / `addTextSpan` 之后框架不保证把光标跟着平移。
+   * 前缀长度一变（取消列表 -3、换样式 ±2），光标就会指到错的位置，用户接着打的第一个字
+   * 会落在别处。这里按"**光标相对正文的偏移**"来保 —— 前缀换了，正文里那个位置不变。
+   *
+   * 【为什么换样式要包原子区间】摘旧 + 插新是两次内容变更，各自会进一条历史，
+   * 不合并的话"换个列表样式"要撤销两下才还原。两者都是 content 记录，
+   * `mergeIntoTop` 能把它们并成一条（与 `addFileChip` 同一个用法）。
+   */
+  private replaceListPrefix(paragraphStart: number, oldLength: number, newText: string,
+    caret: number, uiContext: UIContext) {
+    // 光标在正文里的位置：跳过旧前缀之后它偏移了多少
+    const textOffset = Math.max(0, caret - paragraphStart - oldLength);
+    const newLength = newText.length;
+    if (oldLength === 0) {
+      this.insertMarkerText(paragraphStart, newText, uiContext);
+      this.contentController.setCaretOffset(paragraphStart + newLength + textOffset);
+      return;
+    }
+    this.beginAtomic();
+    try {
+      this.removeListMarkerAt(paragraphStart, oldLength);
+      if (newLength > 0) {
+        this.insertMarkerText(paragraphStart, newText, uiContext);
+      }
+    } finally {
+      this.endAtomic();
+    }
+    this.contentController.setCaretOffset(paragraphStart + newLength + textOffset);
+  }
+
+  /**
+   * 回车续接列表（由 `onDidChange` 消费 `pendingEnterOffset` 后调用）。
+   *
+   * 与 `continueTodoParagraph` 同型：`enterOffset` 是刚插入的那个换行的位置，
+   * 新段落从 `enterOffset + 1` 开始。
+   *
+   * 【空列表项回车 = 退出列表】标记后面没有内容时，只把标记摘掉、不续接 ——
+   * 否则用户永远出不了列表。这一步是 `onDidChange` 里的内容变更，必须包 `isRepairing` 守卫。
+   *
+   * 【它产生的变更会被 onWillChange 自动记为 content 记录】所以"退出列表"天然可撤销。
+   */
+  private continueListParagraph(enterOffset: number, uiContext: UIContext) {
+    const previous = this.paragraphBoundsAt(enterOffset - 1);
+    const previousStart = previous.start ?? (enterOffset - 1);
+    const previousEnd = previous.end ?? enterOffset;
+    // 待办优先：上一段以勾选框开头时，新段落的标记槽归 `continueTodoParagraph`，这里不插手
+    if (this.todoMarkAt(previousStart) !== undefined) {
+      return;
+    }
+    // 只读上一段：这条路径**每次回车**都会走，不能在这里读全量 span
+    let line: string;
+    try {
+      line = textInRange(
+        this.contentController.getSpans({ start: previousStart, end: previousEnd }),
+        previousStart, previousEnd);
+    } catch (error) {
+      console.error(`[list] 读取上一段文本失败: ${JSON.stringify(error)}`);
+      return;
+    }
+    const marker = markerOf(line);
+    if (marker === undefined) {
+      return;
+    }
+    // 空列表项 → 退出列表：把标记**连同刚插入的那个换行**一起摘掉。
+    //
+    // 【为什么连换行一起删】只删标记的话，用户会看到"原位置一个空行 + 光标在下一个空行"，
+    // 与 Word / 系统备忘录的手感不同（它们停在原地、不多出一行）。删掉换行让两段空段落合并，
+    // 表现为"回车只是退出了列表"。
+    //
+    // 这一步是 `onDidChange` 里的内容变更，必须包 `isRepairing` 守卫，否则图片维护那一遍
+    // 会读到半更新的文档。
+    if (line.substring(marker.text.length).trim() === '') {
+      const markerLength = marker.text.length;
+      this.isRepairing = true;
+      try {
+        // 两次删除**内联写**（不走 removeListMarkerAt）：那个包装会吞掉异常，
+        // 一旦第一次删除失败，按坐标算的第二次就会删到用户内容上。
+        // 内联后异常会中断后续，最坏只是"没退出成功"。
+        //
+        // 先删标记：其后所有坐标左移 markerLength
+        this.contentController.deleteSpans({ start: previousStart, end: previousStart + markerLength });
+        // 那个换行原本在 enterOffset，左移后落在 enterOffset - markerLength。
+        // 光标位置也是**在标记删除成功之后**才校准的
+        this.contentController.deleteSpans({
+          start: enterOffset - markerLength,
+          end: enterOffset - markerLength + 1,
+        });
+        // 光标落在合并后那个空段落的起点
+        this.contentController.setCaretOffset(previousStart);
+      } catch (error) {
+        console.error(`[list] 退出列表失败: ${JSON.stringify(error)}`);
+      } finally {
+        this.isRepairing = false;
+      }
+      return;
+    }
+    const ordinal = isOrdered(marker.kind) ? (marker.ordinal ?? 0) + 1 : 1;
+    const text = markerText(marker.kind, ordinal);
+    this.insertMarkerText(enterOffset + 1, text, uiContext);
+    this.contentController.setCaretOffset(enterOffset + 1 + text.length);
+  }
+
   /**
    * 恢复初始状态
    */
@@ -2246,6 +2881,10 @@ export class MemoEditorController {
     this.isUnderline = false;
     this.isHandWrite = false;
     this.alignStyle = TextAlign.Start;
+    // 缩进 / 对齐按钮的可用性按"旧那页的光标"算过，换页一律先置灰，等弹窗打开时再算
+    this.canIndentDecrease = false;
+    this.canIndentIncrease = false;
+    this.canSetAlign = false;
     this.handwriteController = new HandwriteController();
     // 换了新的 handwriteController，上一页的就绪状态与待加载路径一律作废
     this.inkCanvasReady = false;
@@ -2344,7 +2983,8 @@ export class MemoEditorController {
           // 前一段有被拆成两段、对齐方式跟着漂移的风险。
           // 左边是图片（取不到文本样式）时回落输入样式
           style: beforeSpan ? textStyleResult2Style(beforeSpan.textStyle) : this.effectiveTypingStyle(uiContext),
-          paragraphStyle: beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined,
+          paragraphStyle: this.paragraphStyleForBreak(caret - 1,
+            beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined),
         });
         imageOffset += 1;
       }
@@ -2568,7 +3208,8 @@ export class MemoEditorController {
           // 前一段有被拆成两段、对齐方式跟着漂移的风险。
           // 左边是图片 / chip（取不到文本样式）时回落输入样式
           style: beforeSpan ? textStyleResult2Style(beforeSpan.textStyle) : this.effectiveTypingStyle(uiContext),
-          paragraphStyle: beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined,
+          paragraphStyle: this.paragraphStyleForBreak(caret - 1,
+            beforeParagraph ? { textAlign: beforeParagraph.textAlign } : undefined),
         });
         chipOffset += 1;
       }
