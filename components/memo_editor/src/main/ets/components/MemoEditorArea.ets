@@ -179,6 +179,65 @@ export struct MemoEditorArea {
         .color($r('sys.color.ohos_id_color_button_divider'));
 
       Row() {
+        // 向右缩进
+        Image($r('app.media.indent_right'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+
+        // 向左缩进
+        Image($r('app.media.indent_left'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+
+        // 有序列表（数字）
+        Image($r('app.media.list_number'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+
+        // 有序列表（字母）
+        Image($r('app.media.list_letter'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+
+        // 无序列表（实心圆）
+        Image($r('app.media.list_bullet'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+
+        // 无序列表（方块）
+        Image($r('app.media.list_square'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
+      }
+      .width('100%')
+      .padding({ top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+      .justifyContent(FlexAlign.SpaceBetween);
+
+      Divider()
+        .width('100%')
+        .strokeWidth(1)
+        .color($r('sys.color.ohos_id_color_button_divider'));
+
+      Row() {
         ForEach(
           COLOR_LIST,
           (color: ResourceColor, index: number) => {
@@ -227,11 +286,8 @@ export struct MemoEditorArea {
             step: 2,
             style: SliderStyle.InSet,
           })
-            .trackThickness(18)
-            .trackColor($r('sys.color.comp_background_secondary'))
-            .selectedColor($r('sys.color.comp_background_emphasize'))
-            .blockSize({ width: 12, height: 12 })
-            .blockStyle({ type: SliderBlockType.IMAGE, image: $r('app.media.font_setting') })
+            .trackThickness(20)
+            .selectedColor('#EBAC24')
             .onChange((value: number) => {
               this.controller.fontSize = value;
               this.controller.updateTextStyle({

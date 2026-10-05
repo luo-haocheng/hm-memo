@@ -1687,8 +1687,7 @@ export class MemoEditorController {
     let confirmed = false;
     try {
       const result = await uiContext.getPromptAction().showDialog({
-        title: '删除录音',
-        message: '删除后不可恢复，确定删除这段录音吗？',
+        message: '是否删除录音？',
         // Button 的 color 是**必填**的（`text` 与 `color` 都不可省）
         buttons: [
           { text: '取消', color: $r('sys.color.font_primary') },
