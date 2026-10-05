@@ -212,10 +212,16 @@ export struct MemoEditorArea {
             this.controller.indentParagraph(-1);
           });
 
+        // 四个列表按钮共用一个可用性开关：相册照片 / 附件 chip 段落一律不能插列表。
+        // （普通段落、列表段落、待办段落都可以 —— 后三者之间还能互相转换）
         // 有序列表（数字）
         Image($r('app.media.list_number'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canInsertMark
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canInsertMark ? 1 : 0.4)
+          .enabled(this.controller.canInsertMark)
           .onClick(() => {
             this.controller.applyList(this.getUIContext(), 'ordered-number');
           });
@@ -223,7 +229,11 @@ export struct MemoEditorArea {
         // 有序列表（字母）
         Image($r('app.media.list_letter'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canInsertMark
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canInsertMark ? 1 : 0.4)
+          .enabled(this.controller.canInsertMark)
           .onClick(() => {
             this.controller.applyList(this.getUIContext(), 'ordered-letter');
           });
@@ -231,7 +241,11 @@ export struct MemoEditorArea {
         // 无序列表（实心圆）
         Image($r('app.media.list_bullet'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canInsertMark
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canInsertMark ? 1 : 0.4)
+          .enabled(this.controller.canInsertMark)
           .onClick(() => {
             this.controller.applyList(this.getUIContext(), 'unordered-bullet');
           });
@@ -239,7 +253,11 @@ export struct MemoEditorArea {
         // 无序列表（方块）
         Image($r('app.media.list_square'))
           .width(24)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canInsertMark
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canInsertMark ? 1 : 0.4)
+          .enabled(this.controller.canInsertMark)
           .onClick(() => {
             this.controller.applyList(this.getUIContext(), 'unordered-square');
           });
@@ -367,10 +385,15 @@ export struct MemoEditorArea {
               });
           });
 
-        // 插入待办勾选框（插到当前段落开头）
+        // 插入待办勾选框（插到当前段落开头）。
+        // 相册照片 / 附件 chip 段落不能插 —— 不可用时置灰 + `.enabled(false)`
         Image($r('app.media.checkmark_circle'))
           .width(22)
-          .fillColor($r('sys.color.font_primary'))
+          .fillColor(this.controller.canInsertMark
+            ? $r('sys.color.font_primary')
+            : $r('sys.color.font_tertiary'))
+          .opacity(this.controller.canInsertMark ? 1 : 0.4)
+          .enabled(this.controller.canInsertMark)
           .onClick(() => {
             this.controller.insertTodoMark();
           });
@@ -782,6 +805,9 @@ export struct MemoEditorArea {
               this.requestInkLoad();
               // 准备播放：解析录音路径 + 取时长（时长为 0 就不显示播放条）
               this.controller.preparePlayback(this.getUIContext(), this.editingMemo);
+              // 工具栏那个待办按钮**常驻可见**，得在内容就位后先算一次它的可用性 ——
+              // 否则进页面后它一直是置灰的，直到用户第一次点正文触发 onSelectionChange
+              this.controller.refreshHeadMarkAvailability();
             })
             .onEditingChange((editStatus) => {
               this.isEditing = editStatus;
@@ -800,10 +826,13 @@ export struct MemoEditorArea {
             // 待办勾选框被点中后，等光标落定再判定点的是哪一张（见 onTodoMarkTap 的注释）
             .onSelectionChange((range: RichEditorRange) => {
               this.controller.onSelectionChange(range);
-              // 样式弹窗开着时兜底重算缩进按钮的可用性。
-              // 正常情况弹窗会挡住编辑器、光标动不了，所以这条几乎不触发；
-              // 但万一弹窗没挡住，它能保证置灰状态不会滞后。**弹窗关着时不做** ——
-              // 这个计算要一次 getParagraphs + 一次全量 getSpans，不能进打字的热路径
+              // 工具栏那个待办按钮**常驻可见**，所以它必须跟着光标实时更新 ——
+              // 但不能顺手把 refreshParagraphButtonState 整条搬过来：那要一次
+              // getParagraphs + 一次全量 getSpans，放进打字的热路径太贵。
+              // 这里只刷新"能不能插段首标记"这一个**廉价**判据
+              this.controller.refreshHeadMarkAvailability();
+              // 样式弹窗开着时兜底重算全部按钮的可用性。
+              // 正常情况弹窗会挡住编辑器、光标动不了，所以这条几乎不触发
               if (this.styleDialogId >= 0) {
                 this.controller.refreshParagraphButtonState();
               }

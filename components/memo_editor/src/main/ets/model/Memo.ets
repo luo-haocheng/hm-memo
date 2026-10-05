@@ -200,7 +200,7 @@ const JPEG_QUALITY = 85;
 export const BUILTIN_IMAGE_SIZE = 18;
 
 // 内置图片的右边距（vp）
-const BUILTIN_IMAGE_RIGHT_MARGIN = 4;
+const BUILTIN_IMAGE_RIGHT_MARGIN = 6;
 
 /** 内置图片名称：圆环（circle.svg）—— 待办勾选框的「未完成」态 */
 export const BUILTIN_IMAGE_CIRCLE = 'circle';

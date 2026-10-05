@@ -49,9 +49,11 @@ import {
   COLOR_LIST,
   DEFAULT_FONT_SIZE,
   INDENT_MAX_LEVEL,
+  ORDERED_MARKER_FONT_SIZE,
   RECORD_BAR_COUNT,
   RECORD_BYTES_PER_FRAME,
-  RECORD_LEVEL_DECAY
+  RECORD_LEVEL_DECAY,
+  UNORDERED_MARKER_FONT_SIZE
 } from '../common/Constants';
 import { HandwriteController } from '@kit.Penkit';
 import { AudioRecorder, RecorderTick } from '../recorder/AudioRecorder';
@@ -229,6 +231,46 @@ function isAlbumPhoto(span: RichEditorSpan): boolean {
 }
 
 /**
+ * 判断"段首标记槽能不能用"时，最多往光标左边看几格。
+ *
+ * 见 `canInsertHeadMark` 的注释：照片 / chip **独占一段**，所以图片离光标必定很近。
+ */
+const HEAD_MARK_LOOKBACK = 4;
+
+/**
+ * 这一格是不是**挡路**的段首占位 —— 也就是「相册照片」或「附件 chip」。
+ *
+ * 这两类各自独占一段（`onDidChange` 的维护规则保证），段首那一格属于图片本身；
+ * 往那里塞列表标记 / 勾选框只会和"图片独占一段"的维护规则打架，所以它们挡路。
+ *
+ * ⚠️ **待办勾选框不算挡路**：它虽然同样是段首的图片，但它本身就是一种段首标记，
+ * 与列表标记之间**可以互相转换**（先摘旧的再插新的，标记槽始终只被一样东西占着）。
+ * 光有一张"坐标字符表"分不出这三者 —— 表里它们都是一个哨兵，必须看 span 的真实类型。
+ */
+function isBlockingHeadUnit(span: RichEditorSpan): boolean {
+  if (isBuilderSpan(span)) {
+    return true; // 附件 chip
+  }
+  const name = builtinImageNameOf(span);
+  if (name !== undefined && toggledTodoMark(name) !== undefined) {
+    return false; // 待办勾选框 —— 允许
+  }
+  // 剩下的 image 形状就是相册照片；文本 span 不挡路
+  return (span as RichEditorImageSpanResult).imageStyle !== undefined;
+}
+
+/** 覆盖 position 这个坐标单位的 span；没有（落在空隙里）返回 undefined */
+function spanCovering(spans: Array<RichEditorSpan>, position: number): RichEditorSpan | undefined {
+  for (const span of spans) {
+    const range = span.spanPosition.spanRange;
+    if (position >= range[0] && position < range[1]) {
+      return span;
+    }
+  }
+  return undefined;
+}
+
+/**
  * 一处待补的段落分隔：在 offset 处插一个换行，让相册图片重新独占一段。
  * 样式取自紧邻的文本 span（见 buildParagraphFix）
  */
@@ -261,17 +303,37 @@ interface AttachmentEntry {
 }
 
 /**
- * 这批新内容是不是"恰好一个换行" —— 也就是用户按了回车。
+ * 这次变更是不是"在 `position` 处插入了换行" —— 也就是用户按了回车。
  *
- * 换行在编辑器里**永远单独成 span**（见 SPAN_EDITOR_REVIEW §二），所以这里能精确认出来。
- * 靠这个判定把它和"粘贴整段文本"区分开：粘贴是多 span，不会被当成回车。
+ * 【为什么不是"新侧恰好一个 value === '\n' 的 span"】那个写法依赖**"换行永远单独成 span"**
+ * 这个假设（旧注释与 SPAN_EDITOR_REVIEW §二 都这么写），真机实测它**不总成立**：
+ *
+ *   复现路径：列表项末尾 → 退格删一个字符 → 打一个字符 → 回车。
+ *   实测日志：`rangeBefore=[9,9) 判定为回车=否 span数=1 | [0]range=[8,10)value="一\n"`
+ *   —— 新换行被**并进了刚打出来的那个字符所在的 span**，框架报回的是整段 `"一\n"`。
+ *   只认 `value === '\n'` 会把这次回车整个漏掉，表现就是"回车不续接列表"。
+ *
+ * 所以改判**变更位置上的那一格是什么字符**：对"在 `position` 处纯插入"而言，
+ * 变更后那一格就是这次插进来的第一个字符 —— 它是换行就说明用户按了回车。
+ * 这同时天然排除了"打字"（那格是刚打的字）与"粘贴整段"（那格是粘贴内容的首字符）。
+ *
+ * `position` 必须由调用方保证是**折叠区间**（`rangeBefore.start === rangeBefore.end`），
+ * 否则"那一格"是替换后的内容，不是新插入的内容。
  */
-function isSingleNewline(spans: Array<RichEditorSpan>): boolean {
-  if (spans.length !== 1) {
-    return false;
+function isSingleNewline(spans: Array<RichEditorSpan>, position: number): boolean {
+  for (const span of spans) {
+    const textSpan = span as RichEditorTextSpanResult;
+    if (textSpan.textStyle === undefined || typeof textSpan.value !== 'string') {
+      continue;
+    }
+    const range = textSpan.spanPosition.spanRange;
+    if (position < range[0] || position >= range[1]) {
+      continue;
+    }
+    // 变更位置上的那一格，就是这次插进来的第一个字符
+    return textSpan.value[position - range[0]] === '\n';
   }
-  const textSpan = spans[0] as RichEditorTextSpanResult;
-  return textSpan.textStyle !== undefined && textSpan.value === '\n';
+  return false;
 }
 
 /**
@@ -357,6 +419,17 @@ export class MemoEditorController {
    * 对齐是"整段一个值"，所以三个按钮共用一个开关，不逐值判定。
    */
   @Trace canSetAlign: boolean = false;
+
+  /**
+   * 光标所在段落能不能插入**段首标记**（列表标记 / 待办勾选框）。
+   * 相册照片段落与附件 chip 段落不能 —— 工具栏那个待办按钮、样式弹窗里那四个列表按钮据此置灰。
+   *
+   * 【为什么它是唯一一个可以挂在每次光标移动上的】工具栏的待办按钮**常驻可见**，
+   * 不像另外几个只在弹窗打开时才被看到，所以它必须在光标移动时刷新。
+   * 好在它的判据很便宜（只往左看几格，见 `canInsertHeadMark`），不像
+   * `canIndentIncrease` 那样要 `getParagraphs` + 全量 `getSpans`。
+   */
+  @Trace canInsertMark: boolean = false;
   // 指向当前生效的历史记录下标。0 是"初始基线"，不可撤销回去
   @Trace currRecordIdx: number = -1;
   // 历史长度：单独暴露给 UI，驱动重做按钮的灰显
@@ -667,7 +740,8 @@ export class MemoEditorController {
 
     // 这次是不是"回车新建了一段"？判定见 isSingleNewline 的注释。
     // 放在这里是为了只判一次 —— 下面记录怎么建、是不是纯删除，都不影响这个判定
-    this.pendingEnterOffset = (rangeStart === rangeEnd && isSingleNewline(afterRaw)) ? rangeStart : -1;
+    this.pendingEnterOffset = (rangeStart === rangeEnd && isSingleNewline(afterRaw, rangeStart))
+      ? rangeStart : -1;
 
     const record = new ChangeRecord();
     record.changeStart = rangeStart;
@@ -791,9 +865,13 @@ export class MemoEditorController {
     // 放在下面的段落维护【之前】：它会插一张图，而那段维护是按"当时的坐标"扫描的，
     // 先插再扫，坐标才对得上
     if (enterOffset >= 0) {
-      this.continueTodoParagraph(enterOffset);
-      // 列表续接排在待办之后：它会先看上一段是不是待办，是就让位（段首标记槽单占）
-      this.continueListParagraph(enterOffset, uiContext);
+      // 待办优先，**而且是互斥的**：上一段是待办段落时，这次回车已由 continueTodoParagraph
+      // 处理完（续接或退出），列表不再插手。
+      // 这不只是"标记槽单占"的语义要求 —— 退出待办会把文档缩短 2 格，`enterOffset` 随即失效，
+      // 再拿它去判列表会读到错的位置（甚至误判出一个列表来续接）。
+      if (!this.continueTodoParagraph(enterOffset)) {
+        this.continueListParagraph(enterOffset, uiContext);
+      }
     }
     const rangeStart = rangeAfter.start ?? 0;
     const rangeEnd = rangeAfter.end ?? 0;
@@ -2165,6 +2243,60 @@ export class MemoEditorController {
    * `getParagraphs()` 报的段首落在图片【之后】—— 那一格在 `start` 左边，只扫 `[start, end)`
    * 会漏掉它。而正常段落里 `start - 1` 是上一段末尾的换行，不是哨兵，不会误判。
    */
+  /**
+   * 光标所在段落能不能插入**段首标记**（列表标记 / 待办勾选框）。
+   *
+   * 不能的只有两类：**相册照片段落**与**附件 chip 段落**。
+   * 可以的三类：普通段落、**列表段落**、**待办段落** —— 后两者之间还能互相转换
+   *（转换 = 先摘掉旧标记再插新的，标记槽始终只被一样东西占着）。
+   *
+   * 【为什么不能查 getParagraphs 找段首】本判定要挂在**每次光标移动**上
+   *（工具栏那个待办按钮常驻可见），而 `getParagraphs` + 全量 `getSpans` 太贵。
+   *
+   * 【为什么只往左看几格就够】**相册照片与附件 chip 独占一段**，所以它们那一段里
+   * 图片必定就在光标左边 1~2 格之内；往左扫时**先遇到换行就说明本段段首在更左边、够不着**，
+   * 那本段就不是图片段落，直接放行。
+   *
+   * 【扫完窗口还没遇到换行也算放行】说明本段比窗口长得多 ——
+   * 而照片 / chip 段落不可能长，所以它一定是普通 / 列表 / 待办段落，都允许。
+   *
+   * ⚠️ 它判的是"**能不能**插"，不负责"插什么" —— 摘旧标记、插新标记由调用方做。
+   */
+  canInsertHeadMark(): boolean {
+    const caret = this.contentController.getCaretOffset();
+    if (caret < 0) {
+      // 编辑器没获焦 / 拿不到光标 ⇒ 没有"当前段落"
+      return false;
+    }
+    const from = Math.max(0, caret - HEAD_MARK_LOOKBACK);
+    let spans: Array<RichEditorSpan>;
+    let units: string;
+    try {
+      spans = this.contentController.getSpans({ start: from, end: caret });
+      units = textInRange(spans, from, caret);
+    } catch (error) {
+      console.error(`[list] 判断段首标记槽失败: ${JSON.stringify(error)}`);
+      return false; // 读不出来就不给插，保守
+    }
+    // units 的最后一格是 caret - 1，从右往左扫
+    for (let i = units.length - 1; i >= 0; i--) {
+      const unit = units[i];
+      if (unit === '\n') {
+        return true; // 到了段界：段首在更左边，够不着 ⇒ 放行
+      }
+      if (unit === NON_TEXT_SENTINEL) {
+        const span = spanCovering(spans, from + i);
+        return span === undefined ? true : !isBlockingHeadUnit(span);
+      }
+    }
+    return true;
+  }
+
+  /** 光标移动时刷新"能不能插段首标记"。廉价，所以可以直接挂在每次选区变化上。 */
+  refreshHeadMarkAvailability() {
+    this.canInsertMark = this.canInsertHeadMark();
+  }
+
   private isIndentableParagraph(paragraph: RichEditorParagraphResult, chars: string[]): boolean {
     const start = paragraph.range[0];
     const end = paragraph.range[1];
@@ -2235,6 +2367,7 @@ export class MemoEditorController {
     this.canIndentDecrease = false;
     this.canIndentIncrease = false;
     this.canSetAlign = false;
+    this.canInsertMark = this.canInsertHeadMark();
     const caret = this.contentController.getCaretOffset();
     if (caret < 0) {
       // 编辑器没获焦 / 拿不到光标 ⇒ 没有"当前段落"，全部不可用
@@ -2372,20 +2505,40 @@ export class MemoEditorController {
   /**
    * 回车新建的那一段，如果上一段是待办，就把它也变成待办 —— 待办列表连着写的基本手感。
    *
+   * 【空待办项回车 = 退出待办】与列表同款：勾选框之后没有内容时**不换行**，
+   * 而是把勾选框连同刚插入的那个换行一起摘掉，这一段变回普通段落。
+   * 否则用户永远出不了待办（每按一次回车就多一个空勾选框）。
+   *
    * @param enterOffset 换行的插入点（= 上一段的结尾），新段落从它后一格开始
+   * @returns 上一段是不是待办段落 —— 也就是"这次回车已由本函数处理"。
+   *   调用方据此**跳过后面的列表续接**：退出待办会把文档缩短 2 格，
+   *   `enterOffset` 随即失效，再拿它去判列表会读到错的位置。
    *
    * 触发条件由 onWillChange 判定（纯插入 + 恰好一个换行），粘贴整段不会走到这里。
    */
-  private continueTodoParagraph(enterOffset: number) {
-    // 上一段以勾选框开头吗？注意用 paragraphStartAt 而不是直接取 getParagraphRange，
-    // 理由见它的注释
-    if (this.todoMarkAt(this.paragraphStartAt(enterOffset - 1)) === undefined) {
-      return;
+  private continueTodoParagraph(enterOffset: number): boolean {
+    // 上一段以勾选框开头吗？注意用 paragraphBoundsAt 而不是直接取 getParagraphRange，
+    // 理由见它的注释。
+    //
+    // ⚠️ **定位用 `enterOffset` 而不是 `enterOffset - 1`**：`enterOffset` 就是回车【前】的
+    // 光标位置，也就是用户"刚离开的那一段"里的位置。而 `enterOffset - 1` 在光标恰好停在
+    // **段落起点**（典型的"上一个回车造出来的空行"）时会落进**前一段**，
+    // 于是误认成"上一行还是待办"，把勾选框插到更下面那一行去。
+    const previous = this.paragraphBoundsAt(enterOffset);
+    const previousStart = previous.start ?? enterOffset;
+    const previousEnd = previous.end ?? enterOffset;
+    if (this.todoMarkAt(previousStart) === undefined) {
+      return false;
+    }
+    if (this.isEmptyTodoParagraph(previousStart, previousEnd)) {
+      this.exitTodoParagraph(previousStart, enterOffset);
+      return true;
     }
     const resource = builtinImageResource(TODO_MARK_OPEN);
     if (!resource) {
       console.error(`Unknown builtin image: ${TODO_MARK_OPEN}`);
-      return;
+      // 上一段确实是待办段落，只是插不进去 —— 仍然轮不到列表续接
+      return true;
     }
     try {
       this.contentController.addImageSpan(resource, {
@@ -2402,6 +2555,124 @@ export class MemoEditorController {
     } catch (error) {
       console.error(`Failed to continue todo paragraph. Cause: ${JSON.stringify(error)}`);
     }
+    return true;
+  }
+
+  /**
+   * 列表 → 待办：摘掉段首的列表标记、在原位插上勾选框。
+   *
+   * 两步包成一次原子区间 —— 都是内容变更，`mergeIntoTop` 能把它们并成**一条**历史
+   *（与 `addFileChip`、`replaceListPrefix` 同一用法）。
+   *
+   * 光标按"相对正文的偏移"还原（与 `replaceListPrefix` 同一手法）：旧前缀 `oldLength` 格换成了
+   * 1 格勾选框，偏移不变、绝对位置按新前缀算。
+   */
+  private replaceListPrefixWithTodo(paragraphStart: number, oldLength: number, caret: number) {
+    const resource = builtinImageResource(TODO_MARK_OPEN);
+    if (!resource) {
+      console.error(`Unknown builtin image: ${TODO_MARK_OPEN}`);
+      return;
+    }
+    const textOffset = Math.max(0, caret - paragraphStart - oldLength);
+    // 先重置段落样式（在标记变换【之前】，理由见 resetParagraphStyleForMark）。
+    // 列表段落本来就已是 Start + 无缩进，这一步通常是空操作
+    this.resetParagraphStyleForMark(paragraphStart);
+    this.beginAtomic();
+    try {
+      this.contentController.deleteSpans({ start: paragraphStart, end: paragraphStart + oldLength });
+      this.contentController.addImageSpan(resource, {
+        offset: paragraphStart,
+        imageStyle: builtinImageStyle(),
+        gesture: {
+          onClick: () => {
+            this.onTodoMarkTap();
+          },
+        },
+      });
+    } catch (error) {
+      console.error(`[todo] 列表转待办失败: ${JSON.stringify(error)}`);
+      return;
+    } finally {
+      this.endAtomic();
+    }
+    // 前缀变成 1 格勾选框
+    this.contentController.setCaretOffset(paragraphStart + 1 + textOffset);
+  }
+
+  /**
+   * 取消待办：摘掉勾选框，这一段变回普通段落。
+   *
+   * 【"已完成"要连灰色一起去掉】勾选成已完成时文字被 `applyDoneStyle` 变灰了；
+   * 只删图标会留下一段灰色的普通文字，看着像坏了。
+   *
+   * 【为什么先算文字范围再删图标】删除之后其后所有坐标左移 1，算好的范围要跟着左移
+   *（见下方两处 `- 1`）。
+   *
+   * 段落样式不用管：待办段落按不变量已经是 `Start` + 无缩进（见 `resetParagraphStyleForMark`）。
+   */
+  private removeTodoMark(paragraphStart: number, caret: number, markName: string) {
+    const wasDone = markName === TODO_MARK_DONE;
+    const textRange = this.todoTextRange(paragraphStart);
+    try {
+      this.contentController.deleteSpans({ start: paragraphStart, end: paragraphStart + 1 });
+    } catch (error) {
+      console.error(`[todo] 移除勾选框失败: ${JSON.stringify(error)}`);
+      return;
+    }
+    // 光标在勾选框右边时跟着左移一格；在它左边（或就是它）则原地不动
+    this.contentController.setCaretOffset(Math.max(paragraphStart, caret - 1));
+    if (!wasDone) {
+      return;
+    }
+    const textStart = textRange.start ?? paragraphStart;
+    const textEnd = textRange.end ?? paragraphStart;
+    if (textEnd > textStart) {
+      // 整段文字左移了 1 格
+      this.applyDoneStyle(textStart - 1, textEnd - 1, false);
+    }
+  }
+
+  /**
+   * 这个待办段落是不是"空项" —— 勾选框之后只剩空白。
+   *
+   * 只读这一段（`textInRange`）而不建全量坐标表：这条路径**每次回车**都会走。
+   */
+  private isEmptyTodoParagraph(paragraphStart: number, paragraphEnd: number): boolean {
+    try {
+      const line = textInRange(
+        this.contentController.getSpans({ start: paragraphStart, end: paragraphEnd }),
+        paragraphStart, paragraphEnd);
+      // 行首那一格是勾选框（非文本单元，在坐标表里是哨兵），跳过它再看剩下的
+      const content = line.startsWith(NON_TEXT_SENTINEL) ? line.substring(1) : line;
+      return content.trim() === '';
+    } catch (error) {
+      console.error(`[todo] 读取待办段落失败: ${JSON.stringify(error)}`);
+      // 读不出来时按"非空"处理：宁可多续接一个待办，也不要把用户可能有的内容删掉
+      return false;
+    }
+  }
+
+  /**
+   * 空待办项回车 = 退出待办：把勾选框**连同刚插入的那个换行**一起摘掉，这一段变回普通段落。
+   *
+   * 与 `continueListParagraph` 的空项退出同款，包括那两条实现上的讲究：
+   *   - 两次删除**内联写** —— 包装函数会吞异常，第一次失败时第二次按坐标算的会删到用户内容上
+   *   - 光标**在删除成功之后**才校准
+   * 这是 `onDidChange` 里的内容变更，必须包 `isRepairing` 守卫。
+   */
+  private exitTodoParagraph(paragraphStart: number, enterOffset: number) {
+    this.isRepairing = true;
+    try {
+      // 勾选框占 1 格；其后所有坐标左移 1
+      this.contentController.deleteSpans({ start: paragraphStart, end: paragraphStart + 1 });
+      // 刚插入的那个换行原本在 enterOffset，左移后落在 enterOffset - 1
+      this.contentController.deleteSpans({ start: enterOffset - 1, end: enterOffset });
+      this.contentController.setCaretOffset(paragraphStart);
+    } catch (error) {
+      console.error(`[todo] 退出待办失败: ${JSON.stringify(error)}`);
+    } finally {
+      this.isRepairing = false;
+    }
   }
 
   /**
@@ -2415,27 +2686,47 @@ export class MemoEditorController {
     if (caret < 0) {
       return;
     }
-    const paragraphStart = this.paragraphStartAt(caret);
-    // 段首已经有勾选框就不重复插，免得变成「○○ 买牛奶」
-    if (this.todoMarkAt(paragraphStart) !== undefined) {
+    // 段首标记槽被**相册照片 / 附件 chip** 占着 ⇒ 不插（工具栏按钮此时已置灰，这里是第二道闸）
+    if (!this.canInsertHeadMark()) {
       return;
     }
-    // 段首标记槽**单占**：已经在列表里就不再插勾选框。
-    // 否则会插出 `[勾选框]1. foo` 这种复合标记，而它会让两个"回车续接"逻辑
-    //（continueTodoParagraph / continueListParagraph）在同一个新段落上叠加，行为无法推理
+    const paragraphStart = this.paragraphStartAt(caret);
+    // 段首已经有勾选框 → **再点一次 = 取消待办**（与列表"再点一次取消"同一手感），
+    // 这一段变回普通段落。原来这里是直接 return，于是没法把待办改回普通段落
+    const existingMark = this.todoMarkAt(paragraphStart);
+    if (existingMark !== undefined) {
+      this.removeTodoMark(paragraphStart, caret, existingMark);
+      return;
+    }
+    // 段首是**列表标记** → 这次是"列表 → 待办"的转换。
+    // **必须先摘掉标记** —— 标记槽单占，否则会插出 `[勾选框]1. foo` 这种复合标记，
+    // 而它会让两个"回车续接"逻辑在同一个新段落上叠加，行为无法推理
+    let listMarker: ListMarkerHit | undefined;
     try {
       const chars = buildCharMap(this.contentController.getSpans());
-      if (this.listMarkerAt(paragraphStart, chars) !== undefined) {
-        return;
-      }
+      listMarker = this.listMarkerAt(paragraphStart, chars);
     } catch (error) {
       console.error(`[list] 检查段首列表标记失败: ${JSON.stringify(error)}`);
+    }
+    if (listMarker !== undefined) {
+      this.replaceListPrefixWithTodo(paragraphStart, listMarker.text.length, caret);
+      return;
     }
     const resource = builtinImageResource(TODO_MARK_OPEN);
     if (!resource) {
       console.error(`Unknown builtin image: ${TODO_MARK_OPEN}`);
       return;
     }
+    // 与列表同款：勾选框是另一种"段首标记"，套上之前也把段落样式重置成 Start + 无缩进。
+    // **必须在 addImageSpan 之前** —— 插完勾选框后段落首格就是行内图了，
+    // `getParagraphs()` 报的段首会落到图片之后，再按这个位置去找会选到上一段去
+    //（详见 resetParagraphStyleForMark 的注释②）。
+    this.resetParagraphStyleForMark(paragraphStart);
+    // 光标要留在**原来的编辑位置**，而不是被框架挪到新图标后面。
+    // 按"相对段落正文的偏移"来保 —— 与列表 `replaceListPrefix` 同一手法：
+    // 勾选框占 1 格、插在最前面，其后所有坐标右移 1，所以偏移不变、绝对位置 +1。
+    // 光标原本就停在段首（或段落为空）时偏移为 0，落点就是图标之后，正是该有的行为。
+    const textOffset = Math.max(0, caret - paragraphStart);
     try {
       this.contentController.addImageSpan(resource, {
         offset: paragraphStart,
@@ -2446,6 +2737,8 @@ export class MemoEditorController {
           },
         },
       });
+      // 把光标放回原来的编辑位置（框架本身不保证会跟过去）
+      this.contentController.setCaretOffset(paragraphStart + 1 + textOffset);
     } catch (error) {
       console.error(`Failed to insert todo mark. Cause: ${JSON.stringify(error)}`);
     }
@@ -2638,7 +2931,7 @@ export class MemoEditorController {
   // ==================== 列表 ====================
   //
   // 【为什么是文本前缀】RichEditor 没有任何原生列表 API（真机探针确认段落样式只有
-  // textAlign / leadingMargin / wordBreak）。所以标记就是**真实文本**：`"1. "` / `"• "` 等。
+  // textAlign / leadingMargin / wordBreak）。所以标记就是**真实文本**：`"1. "` / `"● "` 等。
   // 代价是它会进正文、会被复制；换来的是**撤销与持久化零改动** —— 内容变更天然被
   // `onWillChange` 捕获进历史、被 `updateContent` 采集落盘。
   //
@@ -2685,14 +2978,37 @@ export class MemoEditorController {
   }
 
   /**
+   * 插入列表记号时用的文本样式。
+   *
+   * 底色取该处文本 span 的**实际渲染**样式：`addTextSpan` 写入的值不缩放，
+   * 回传渲染值才能让记号的颜色 / 字重等跟正文一致；空段落取不到时回落输入样式。
+   *
+   * 【两类记号的字号都定死】`UNORDERED_MARKER_FONT_SIZE` / `ORDERED_MARKER_FONT_SIZE`。
+   * 否则记号会跟着段落字号一起放大（正文 24 时那就是个巨大的圆点 / 数字）。
+   * **只改字号，不动行高** —— 行高是整段共享的，动它会连带改变正文的行距。
+   */
+  private markerTextStyle(kind: ListKind, offset: number, uiContext: UIContext): RichEditorTextStyle {
+    const base = this.textStyleAtPosition(offset) ?? this.effectiveTypingStyle(uiContext);
+    return {
+      fontSize: isOrdered(kind) ? ORDERED_MARKER_FONT_SIZE : UNORDERED_MARKER_FONT_SIZE,
+      lineHeight: base.lineHeight,
+      fontColor: base.fontColor,
+      fontStyle: base.fontStyle,
+      fontWeight: base.fontWeight,
+      fontFamily: base.fontFamily,
+      decoration: base.decoration,
+      letterSpacing: base.letterSpacing,
+    };
+  }
+
+  /**
    * 在 offset 处插入列表标记文本。
    *
-   * 样式取该处文本 span 的实际渲染样式（`addTextSpan` 写入的值不缩放，回传渲染值才能与正文一致）；
-   * 空段落取不到时回落输入样式。`paragraphStyle` 一并带上 —— 探针显示它对**已有**段落是空操作，
+   * `paragraphStyle` 一并带上 —— 探针显示它对**已有**段落是空操作，
    * 但带上没有代价，能避免"插入点恰在段落边界时把段落样式重置"这类未验证的风险。
    */
-  private insertMarkerText(offset: number, text: string, uiContext: UIContext) {
-    const style = this.textStyleAtPosition(offset) ?? this.effectiveTypingStyle(uiContext);
+  private insertMarkerText(offset: number, text: string, kind: ListKind, uiContext: UIContext) {
+    const style = this.markerTextStyle(kind, offset, uiContext);
     try {
       this.contentController.addTextSpan(text, {
         offset: offset,
@@ -2739,31 +3055,106 @@ export class MemoEditorController {
    * 工具栏的四个列表按钮。
    *
    * 同一种列表再点一次 = **取消列表**；换一种 = 摘掉旧标记再插新的。
+   *
+   * 【添加上列表时会把段落样式重置成 Start + 无缩进】见 `resetParagraphStyleForMark`。
+   * **取消列表时不动段落样式** —— 需求只说"添加时重置"。
    */
   applyList(uiContext: UIContext, kind: ListKind) {
     const caret = this.contentController.getCaretOffset();
     if (caret < 0) {
       return;
     }
+    // 段首标记槽被**相册照片 / 附件 chip** 占着 ⇒ 不插（那两类按钮此时已置灰，这里是第二道闸）
+    if (!this.canInsertHeadMark()) {
+      return;
+    }
     const paragraphStart = this.paragraphStartAt(caret);
     const chars = buildCharMap(this.contentController.getSpans());
-    // 段首标记槽**单占**：那里已经是图片（待办勾选框 / 相册照片 / 附件 chip）时不插列表标记。
-    // 必须显式挡在这里 —— `listMarkerAt` 对这种情况返回 undefined，而 undefined 在下文
-    // 被当作"没有标记、可以插"，于是会插出 `1. ☐买牛奶` 这种复合标记，
-    // 接着 onDidChange 的图片维护又会去拆段。照片 / chip 的段落同理。
-    if (chars[paragraphStart] === NON_TEXT_SENTINEL
-      || (paragraphStart > 0 && chars[paragraphStart - 1] === NON_TEXT_SENTINEL)) {
+    const existingList = this.listMarkerAt(paragraphStart, chars);
+    if (existingList !== undefined && existingList.kind === kind) {
+      // 再点一次同一种 = 取消。**不重置段落样式** —— 需求只管"添加时"
+      this.replaceListPrefix(paragraphStart, existingList.text.length, '', kind, caret, uiContext);
       return;
     }
-    const existing = this.listMarkerAt(paragraphStart, chars);
-    if (existing !== undefined && existing.kind === kind) {
-      // 再点一次同一种 = 取消
-      this.replaceListPrefix(paragraphStart, existing.text.length, '', caret, uiContext);
-      return;
+    // 这一格是不是已经有个待办勾选框？是的话这次是"待办 → 列表"的转换
+    const todoMark = this.todoMarkAt(paragraphStart);
+    if (todoMark === undefined) {
+      // 普通段落 / 列表段落：先把段落样式重置成 Start + 无缩进，再插标记。
+      // ⚠️ **待办段落不走这一步** —— 它的 `paragraphStart` 是勾选框那一格，
+      // 而框架报的段首落在勾选框【之后】，按这个位置去找会选到**上一段**去
+      //（`resetParagraphStyleForMark` 的注释②）。待办段落本来就已是 Start + 无缩进，
+      // 那个不变量是加勾选框时建立起来的，不需要再来一次。
+      this.resetParagraphStyleForMark(paragraphStart);
     }
     const text = markerText(kind, this.nextListOrdinal(kind, chars, paragraphStart));
-    this.replaceListPrefix(paragraphStart, existing === undefined ? 0 : existing.text.length,
-      text, caret, uiContext);
+    if (todoMark !== undefined) {
+      // 待办 → 列表：摘掉勾选框（"已完成"还要去掉灰色）再插新标记。
+      // 旧前缀长度是 1（勾选框占一格）；`replaceListPrefix` 内部包了原子区间，
+      // 所以"删旧 + 插新"仍然是**一条**历史
+      const doneRange = todoMark === TODO_MARK_DONE ? this.todoTextRange(paragraphStart) : undefined;
+      this.replaceListPrefix(paragraphStart, 1, text, kind, caret, uiContext);
+      this.unsetDoneStyleAfterPrefixChange(paragraphStart, doneRange, text.length);
+      return;
+    }
+    this.replaceListPrefix(paragraphStart, existingList === undefined ? 0 : existingList.text.length,
+      text, kind, caret, uiContext);
+  }
+
+  /**
+   * 「待办转成列表」之后，把"已完成"的灰色去掉 —— 那段文字现在只是普通正文了。
+   *
+   * 【为什么要按前缀长度平移】范围是在**换前缀之前**用 `todoTextRange` 算的
+   *（它给的是勾选框之后那段文字）。换完前缀后这段文字整体平移了
+   * `newPrefixLength - 1` 格（旧前缀 1 格），所以两个端点都要跟着移。
+   */
+  private unsetDoneStyleAfterPrefixChange(paragraphStart: number, oldTextRange: RichEditorRange | undefined,
+    newPrefixLength: number) {
+    if (oldTextRange === undefined) {
+      return;
+    }
+    const textStart = oldTextRange.start ?? paragraphStart;
+    const textEnd = oldTextRange.end ?? paragraphStart;
+    if (textEnd <= textStart) {
+      return;
+    }
+    this.applyDoneStyle(textStart - 1 + newPrefixLength, textEnd - 1 + newPrefixLength, false);
+  }
+
+  /**
+   * 给段落套上「段首标记」（列表标记 / 待办勾选框）之前，
+   * 把它的段落样式重置成 **Start + 无缩进**。
+   *
+   * 【为什么需要】段首标记是一种"整段排版"取向。带着缩进、或带着居中 / 右对齐再加标记，
+   * 视觉上就是"一个缩进的居中列表项"，像是排版坏了 —— 所以与这两者互斥。
+   *
+   * 【为什么只在这两个入口重置就够】带段首标记的段落**本来就不能缩进、不能改对齐**
+   *（样式弹窗里那六个按钮会置灰，见 `isIndentableParagraph` / `isAlignableParagraph`），
+   * 所以"添加时重置一次"就足以维持这个不变量：
+   * **列表段落 / 待办段落永远是 `Start` + 无缩进**。
+   *
+   * 【为什么必须在插标记之前调 —— 这里有两个独立的理由】
+   *   ① 插了标记之后这一段就成了列表 / 待办段落，而对着它们写段落样式**不生效**
+   *      （按钮置灰的同一条规则）。所以下面走的是不带过滤器的
+   *      `applyParagraphStyleToParagraphs`，而不是带"可对齐"过滤的 `setParagraphAlign`。
+   *   ② 更要紧的是**定位会错**：段落以行内图（勾选框）开头时，`getParagraphs()` 报的段首
+   *      落在图片【之后】。插完勾选框再按原来的 `paragraphStart` 去找段落，
+   *      `paragraphsInRange` 会**选到上一段**去 —— 那就会把无辜的上一段重置掉。
+   *
+   * 【本来就已经是 Start + 无缩进时什么都不做】否则每次加标记都会多出一条无意义的撤销记录。
+   */
+  private resetParagraphStyleForMark(paragraphStart: number) {
+    const paragraphs = this.paragraphsInRange(paragraphStart, paragraphStart);
+    if (paragraphs.length === 0) {
+      return;
+    }
+    const paragraph = paragraphs[0];
+    if (isStartAligned(paragraph.style) && indentLevelOf(paragraph.style) === 0) {
+      return;
+    }
+    this.applyParagraphStyleToParagraphs(
+      paragraphs,
+      () => ({ textAlign: TextAlign.Start, leadingMargin: 0 }),
+      paragraph.range[0]);
   }
 
   /**
@@ -2778,12 +3169,12 @@ export class MemoEditorController {
    * `mergeIntoTop` 能把它们并成一条（与 `addFileChip` 同一个用法）。
    */
   private replaceListPrefix(paragraphStart: number, oldLength: number, newText: string,
-    caret: number, uiContext: UIContext) {
+    kind: ListKind, caret: number, uiContext: UIContext) {
     // 光标在正文里的位置：跳过旧前缀之后它偏移了多少
     const textOffset = Math.max(0, caret - paragraphStart - oldLength);
     const newLength = newText.length;
     if (oldLength === 0) {
-      this.insertMarkerText(paragraphStart, newText, uiContext);
+      this.insertMarkerText(paragraphStart, newText, kind, uiContext);
       this.contentController.setCaretOffset(paragraphStart + newLength + textOffset);
       return;
     }
@@ -2791,7 +3182,7 @@ export class MemoEditorController {
     try {
       this.removeListMarkerAt(paragraphStart, oldLength);
       if (newLength > 0) {
-        this.insertMarkerText(paragraphStart, newText, uiContext);
+        this.insertMarkerText(paragraphStart, newText, kind, uiContext);
       }
     } finally {
       this.endAtomic();
@@ -2811,8 +3202,11 @@ export class MemoEditorController {
    * 【它产生的变更会被 onWillChange 自动记为 content 记录】所以"退出列表"天然可撤销。
    */
   private continueListParagraph(enterOffset: number, uiContext: UIContext) {
-    const previous = this.paragraphBoundsAt(enterOffset - 1);
-    const previousStart = previous.start ?? (enterOffset - 1);
+    // ⚠️ 定位用 `enterOffset` 本身，**不是 `enterOffset - 1`** —— 它等于回车【前】的光标位置，
+    // 正是"用户刚离开的那一段"里的位置。用 `- 1` 的话，当光标恰好停在段落起点
+    //（典型的"上一个回车造出来的空行"）会落进**前一段**，于是把标记插到更下面那一行。
+    const previous = this.paragraphBoundsAt(enterOffset);
+    const previousStart = previous.start ?? enterOffset;
     const previousEnd = previous.end ?? enterOffset;
     // 待办优先：上一段以勾选框开头时，新段落的标记槽归 `continueTodoParagraph`，这里不插手
     if (this.todoMarkAt(previousStart) !== undefined) {
@@ -2867,7 +3261,7 @@ export class MemoEditorController {
     }
     const ordinal = isOrdered(marker.kind) ? (marker.ordinal ?? 0) + 1 : 1;
     const text = markerText(marker.kind, ordinal);
-    this.insertMarkerText(enterOffset + 1, text, uiContext);
+    this.insertMarkerText(enterOffset + 1, text, marker.kind, uiContext);
     this.contentController.setCaretOffset(enterOffset + 1 + text.length);
   }
 
@@ -2881,10 +3275,14 @@ export class MemoEditorController {
     this.isUnderline = false;
     this.isHandWrite = false;
     this.alignStyle = TextAlign.Start;
-    // 缩进 / 对齐按钮的可用性按"旧那页的光标"算过，换页一律先置灰，等弹窗打开时再算
+    // 缩进 / 对齐按钮的可用性按"旧那页的光标"算过，换页一律先置灰，
+    // 等样式弹窗打开时（`refreshParagraphButtonState`）再按新页面实算
     this.canIndentDecrease = false;
     this.canIndentIncrease = false;
     this.canSetAlign = false;
+    // ⚠️ `canInsertMark` 不一样：它对应的按钮在**常驻可见的工具栏**上，先置灰会让用户
+    // 一进页面就看到一个灰按钮。所以取"乐观默认"（可插），由 onReady 与每次光标移动纠正
+    this.canInsertMark = true;
     this.handwriteController = new HandwriteController();
     // 换了新的 handwriteController，上一页的就绪状态与待加载路径一律作废
     this.inkCanvasReady = false;

@@ -104,6 +104,23 @@ export const INDENT_STEP_VP = 24;
 /** 段落缩进的**最大级数**。到顶后「向右缩进」不再生效（按钮不置灰，只是无动作） */
 export const INDENT_MAX_LEVEL = 5;
 
+/**
+ * 无序列表记号（`●` / `■`）的字号（vp）。
+ *
+ * 【为什么要单独定死】记号是**真实文本**，默认会跟着段落的字号走 ——
+ * 正文字号调到 24 时，记号会变成一个硕大的圆点／方块，看起来像排版事故。
+ * 固定成一个小记号，视觉上更克制，也更像"项目符号"而不是正文内容。
+ */
+export const UNORDERED_MARKER_FONT_SIZE = 10;
+
+/**
+ * 有序列表记号（`1.` / `a.`）的字号（vp）。
+ *
+ * 同样定死，理由同上。比无序列表大一点，是因为数字 / 字母的**视觉面积**比
+ * `●`／`■` 这种实心记号小，同字号下会显得更"轻"。
+ */
+export const ORDERED_MARKER_FONT_SIZE = 12;
+
 // 调色盘选项
 export const COLOR_LIST: ResourceColor[] =
   [$r('sys.color.font_primary'), '#FFFFF200', '#FFFF7F27', '#FFED1C24', '#FFA349A4', '#FF00A2E8', '#FF22B14C'];
