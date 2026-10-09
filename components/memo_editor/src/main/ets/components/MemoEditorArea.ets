@@ -88,13 +88,13 @@ export struct MemoEditorArea {
   @Param @Require isMemoSaved: boolean;
   @Param @Once @Require memoTitle: string;
   @Param @Once @Require editingMemo: Memo;
-  @Event moveCategory: (id: string) => void = () => {
-  };
+  @Param @Once @Require isNewMemo: boolean;
   @Event titleChange: (title: string) => void = () => {
   };
   @Event saveStatusChange: (isSaved: boolean) => void = () => {
   };
   @Consumer() kvStore: KVStore | undefined = undefined;
+  @Consumer('appPathStack') appPathStack: NavPathStack = new NavPathStack();
   private memoService: MemoService = MemoService.instance;
   private categoryService: CategoryService = CategoryService.instance;
   private controller: MemoEditorController = MemoEditorController.instance;
@@ -366,6 +366,66 @@ export struct MemoEditorArea {
   }
 
   @Builder
+  memoToolBar() {
+    Flex({
+      justifyContent: FlexAlign.SpaceBetween,
+      alignItems: ItemAlign.Center,
+    }) {
+      Image($r('app.media.share'))
+        .width(24)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          // todo
+        });
+
+      Image(this.currentMemo.isFavorite ? $r('app.media.star_fill') : $r('app.media.star'))
+        .width(24)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(() => {
+          const memoId = this.currentMemo.id;
+          this.currentMemo.isFavorite = !this.currentMemo.isFavorite;
+          this.memoService.collectMemo(memoId, this.currentMemo.isFavorite, this.kvStore, this.getUIContext());
+        });
+
+      Image($r('app.media.trash'))
+        .width(24)
+        .fillColor($r('sys.color.font_primary'))
+        .onClick(async () => {
+          // todo
+          let confirmed = false;
+          const uiContext = this.getUIContext();
+          try {
+            const result = await uiContext.getPromptAction().showDialog({
+              message: '是否删除备忘？删除后可在“最近删除”恢复',
+              // Button 的 color 是**必填**的（`text` 与 `color` 都不可省）
+              buttons: [
+                { text: '取消', color: $r('sys.color.font_primary') },
+                { text: '删除', color: $r('sys.color.warning') },
+              ],
+            });
+            confirmed = result.index === 1;
+          } catch (error) {
+            console.info(`[record] 删除确认框未确认: ${JSON.stringify(error)}`);
+          }
+
+          if (!confirmed) {
+            return;
+          }
+
+          const memoId = this.currentMemo.id;
+          const categoryId = this.currentMemo.categoryId;
+          this.memoService.deleteMemoToTrash(memoId, categoryId, this.kvStore, this.getUIContext());
+
+          this.appPathStack.pop();
+        });
+    }
+    .padding(12)
+    .width('50%')
+    .borderRadius('50%')
+    .backgroundColor($r('sys.color.background_tertiary'));
+  }
+
+  @Builder
   editorToolBar() {
     Flex({
       // 手写模式下只剩一个按钮，居中对齐；文本模式下才是两端排开
@@ -378,7 +438,7 @@ export struct MemoEditorArea {
       if (!this.controller.isHandWrite) {
         // 字体样式
         Image($r('app.media.text_style'))
-          .width(20)
+          .width(22)
           .enabled(!this.isEditingTitle)
           .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor(COLOR_LIST[this.controller.colorIdx])
@@ -409,7 +469,7 @@ export struct MemoEditorArea {
         // 插入待办勾选框（插到当前段落开头）。
         // 相册照片 / 附件 chip 段落不能插 —— 不可用时置灰 + `.enabled(false)`
         Image($r('app.media.checkmark_circle'))
-          .width(22)
+          .width(24)
           .fillColor(this.controller.canInsertMark
             ? $r('sys.color.font_primary')
             : $r('sys.color.font_tertiary'))
@@ -421,7 +481,7 @@ export struct MemoEditorArea {
 
         // 插入图片
         Image($r('app.media.picture'))
-          .width(22)
+          .width(24)
           .enabled(!this.isEditingTitle)
           .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor($r('sys.color.font_primary'))
@@ -431,7 +491,7 @@ export struct MemoEditorArea {
 
         // 插入文件附件（行内 chip）
         Image($r('app.media.ic_attach'))
-          .width(22)
+          .width(24)
           .enabled(!this.isEditingTitle)
           .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor($r('sys.color.font_primary'))
@@ -448,7 +508,7 @@ export struct MemoEditorArea {
         // 音频录制。录音中变灰且不可点（需求 2）——
         // `enabled(false)` 是"只关交互、不动渲染"的开关，与手写画布那边同一个用法
         Image($r('app.media.record_circle'))
-          .width(22)
+          .width(24)
           .fillColor(this.controller.isRecording
             ? $r('sys.color.font_tertiary')
             : $r('sys.color.font_primary'))
@@ -719,7 +779,7 @@ export struct MemoEditorArea {
       .onClick(() => {
         this.categoryService.moveCategory(this.currentMemo, category.value.id);
 
-        this.moveCategory(category.value.id);
+        this.currentMemo.categoryId = category.value.id;
         this.memoService.updateMemo(this.currentMemo, this.kvStore, this.getUIContext());
       });
 
@@ -898,6 +958,7 @@ export struct MemoEditorArea {
             .width('100%')
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
+            .defaultFocus(this.isNewMemo)
             .fontColor($r('sys.color.font_primary'))
             .focusable(!this.controller.isHandWrite)
             .placeholderColor($r('sys.color.font_secondary'))
@@ -1108,6 +1169,8 @@ export struct MemoEditorArea {
       Column({ space: 12 }) {
         if (!this.isMemoSaved) {
           this.editorToolBar();
+        } else {
+          this.memoToolBar();
         }
       }
       // 最上层：要压过画布（zIndex 2）

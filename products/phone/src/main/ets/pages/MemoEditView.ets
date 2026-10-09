@@ -161,10 +161,8 @@ struct MemoEditView {
           currentMemo: this.currentMemo,
           isMemoSaved: this.isMemoSaved,
           editingMemo: this.currentMemo,
+          isNewMemo: !this.isEditMemo,
           memoTitle: this.currentMemo.title,
-          moveCategory: (id: string) => {
-            this.currentMemo.categoryId = id;
-          },
           titleChange: (title: string) => {
             this.memoTitle = title;
           },
@@ -185,6 +183,7 @@ struct MemoEditView {
       const userCategory = params.userCategory as UserCategory;
       if (memoId === '') {
         this.isEditMemo = false;
+        this.isMemoSaved = false;
         if (sysCategory) {
           this.currentMemo.categoryId = '-1';
           if (sysCategory === SystemCategory.FAVORITE_MEMO) {
