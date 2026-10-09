@@ -6,6 +6,9 @@ import {
   RECORD_BAR_MAX_HEIGHT,
   RECORD_BAR_MIN_HEIGHT
 } from '../common/Constants';
+import {
+  CategoryService, KVStore, MemoService, UserCategory
+} from 'data_source';
 import { MemoEditorController } from '../controller/MemoEditorController';
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { FileChipInfo } from '../model/FileChipInfo';
@@ -13,6 +16,8 @@ import { Memo, resolveInkPath } from '../model/Memo';
 import { FileChip } from './FileChip';
 import { HandwriteComponent, PenType } from '@kit.Penkit';
 import { fileIo } from '@kit.CoreFileKit';
+import { DateUtil } from 'util';
+import { Binding, UIUtils } from '@kit.ArkUI';
 
 /**
  * 滚动同步的收敛容差（vp）。
@@ -56,7 +61,8 @@ function formatRecordDuration(ms: number): string {
 
 @ComponentV2
 export struct MemoEditorArea {
-  @Local isEditing: boolean = false;
+  @Local isEditingTitle: boolean = false;
+  @Local isEditingContent: boolean = false;
   // 编辑层 Scroll 的**内容高度**。用来决定画布的长画布上限 ——
   // 画布必须至少能滚到和正文一样远，否则正文滚到底时笔迹跟不上
   @Local scrollContentHeight: number = 0;
@@ -71,14 +77,6 @@ export struct MemoEditorArea {
   //
   // ⚠️ 已知代价：屏幕旋转 / 折叠屏展开若让可用高度变小，这里不会跟着更新。手机端暂不处理
   @Local canvasBaseHeight: number = 0;
-  @Param @Require isMemoSaved: boolean;
-  @Param @Once @Require memoTitle: string;
-  @Param @Once @Require editingMemo: Memo;
-  @Event titleChange: (title: string) => void = () => {
-  };
-  @Event saveStatusChange: (isSaved: boolean) => void = () => {
-  };
-  private controller: MemoEditorController = MemoEditorController.instance;
   /**
    * 拖动进度条时的**本地**位置（毫秒），-1 表示没在拖。
    *
@@ -86,9 +84,30 @@ export struct MemoEditorArea {
    * 跟着重算。用 `@Local` 承接手指，只重绘进度条这一段；松手才把目标交给控制器。
    */
   @Local dragPositionMs: number = -1;
+  @Param @Require currentMemo: Memo;
+  @Param @Require isMemoSaved: boolean;
+  @Param @Once @Require memoTitle: string;
+  @Param @Once @Require editingMemo: Memo;
+  @Event moveCategory: (id: string) => void = () => {
+  };
+  @Event titleChange: (title: string) => void = () => {
+  };
+  @Event saveStatusChange: (isSaved: boolean) => void = () => {
+  };
+  @Consumer() kvStore: KVStore | undefined = undefined;
+  private memoService: MemoService = MemoService.instance;
+  private categoryService: CategoryService = CategoryService.instance;
+  private controller: MemoEditorController = MemoEditorController.instance;
   private styleDialogId = -1;
   // 编辑层 Scroll 的控制器。滚动同步要靠它读绝对偏移（onDidScroll 只给增量）
   private editorScroller: Scroller = new Scroller();
+
+  @Monitor('isMemoSaved')
+  onMemoSave() {
+    if (this.isMemoSaved) {
+      this.controller.isHandWrite = false;
+    }
+  }
 
   @Builder
   styleDialog() {
@@ -360,6 +379,8 @@ export struct MemoEditorArea {
         // 字体样式
         Image($r('app.media.text_style'))
           .width(20)
+          .enabled(!this.isEditingTitle)
+          .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor(COLOR_LIST[this.controller.colorIdx])
           .onClick(() => {
             // 先把"光标所在段落能不能缩进"算出来 —— 弹窗一开，编辑器就被遮住、光标不再移动，
@@ -392,8 +413,8 @@ export struct MemoEditorArea {
           .fillColor(this.controller.canInsertMark
             ? $r('sys.color.font_primary')
             : $r('sys.color.font_tertiary'))
-          .opacity(this.controller.canInsertMark ? 1 : 0.4)
-          .enabled(this.controller.canInsertMark)
+          .enabled(this.controller.canInsertMark && !this.isEditingTitle)
+          .opacity(this.controller.canInsertMark && !this.isEditingTitle ? 1 : 0.4)
           .onClick(() => {
             this.controller.insertTodoMark();
           });
@@ -401,6 +422,8 @@ export struct MemoEditorArea {
         // 插入图片
         Image($r('app.media.picture'))
           .width(22)
+          .enabled(!this.isEditingTitle)
+          .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
             this.controller.insertImage(this.getUIContext());
@@ -409,6 +432,8 @@ export struct MemoEditorArea {
         // 插入文件附件（行内 chip）
         Image($r('app.media.ic_attach'))
           .width(22)
+          .enabled(!this.isEditingTitle)
+          .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor($r('sys.color.font_primary'))
           .onClick(() => {
             // 外层箭头是"工厂"（请求时调一次、带数据），内层箭头才是 CustomBuilder
@@ -427,8 +452,8 @@ export struct MemoEditorArea {
           .fillColor(this.controller.isRecording
             ? $r('sys.color.font_tertiary')
             : $r('sys.color.font_primary'))
-          .opacity(this.controller.isRecording ? 0.4 : 1)
-          .enabled(!this.controller.isRecording)
+          .opacity(this.controller.isRecording || this.isEditingTitle ? 0.4 : 1)
+          .enabled(!this.controller.isRecording || !this.isEditingTitle)
           .onClick(() => {
             // 与 enabled 双保险：权限申请是异步的，置位之前还能被点到
             if (this.controller.isRecording) {
@@ -444,8 +469,10 @@ export struct MemoEditorArea {
 
       // 手写 / 键盘切换。**刻意放在 if 之外** —— 它是切回键盘的**唯一入口**，
       // 收进 else 里就再也出不来手写模式了
-      Image(this.controller.isHandWrite ? $r('app.media.keyboard') : $r('app.media.square_and_pencil'))
-        .width(22)
+      Image(this.controller.isHandWrite ? $r('app.media.keyboard') : $r('app.media.pen_circle'))
+        .width(24)
+        .enabled(!this.isEditingTitle)
+        .opacity(!this.isEditingTitle ? 1 : 0.4)
         .fillColor($r('sys.color.font_primary'))
         .onClick(() => {
           this.getUIContext().animateTo(
@@ -547,9 +574,9 @@ export struct MemoEditorArea {
         .fontColor($r('sys.color.font_secondary'));
     }
     .padding(12)
-    .margin({ left: 12, right: 12 })
     .borderRadius(12)
     .alignItems(VerticalAlign.Center)
+    .margin({ top: 12, left: 12, right: 12 })
     .backgroundColor($r('sys.color.background_secondary'));
   }
 
@@ -639,9 +666,9 @@ export struct MemoEditorArea {
         ]);
     }
     .padding(8)
-    .margin({ left: 12, right: 12 })
     .borderRadius(12)
     .alignItems(VerticalAlign.Center)
+    .margin({ top: 12, left: 12, right: 12 })
     .backgroundColor($r('sys.color.background_secondary'));
   }
 
@@ -653,6 +680,132 @@ export struct MemoEditorArea {
         this.controller.openFile(target, this.getUIContext());
       },
     });
+  }
+
+  @Builder
+  moveCategoryItem(category: Binding<UserCategory>) {
+    Column() {
+      Button() {
+        Row() {
+          Row({ space: 8 }) {
+            Image($r('app.media.folder'))
+              .width(24)
+              .height(24)
+              .fillColor(category.value.color);
+
+            Text(category.value.name)
+              .maxLines(1)
+              .fontSize(14)
+              .fontWeight(600)
+              .constraintSize({ maxWidth: 100 })
+              .fontColor($r('sys.color.font_primary'))
+              .textOverflow({ overflow: TextOverflow.Ellipsis });
+          };
+
+          if (this.currentMemo.categoryId === category.value.id) {
+            Image($r('app.media.checkmark'))
+              .width(24)
+              .height(24)
+              .fillColor($r('sys.color.font_primary'));
+          }
+        }
+        .width('100%')
+        .borderRadius(12)
+        .padding({ left: 8, right: 8 })
+        .justifyContent(FlexAlign.SpaceBetween);
+      }
+      .padding({ top: 12, bottom: 12 })
+      .backgroundColor(Color.Transparent)
+      .onClick(() => {
+        this.categoryService.moveCategory(this.currentMemo, category.value.id);
+
+        this.moveCategory(category.value.id);
+        this.memoService.updateMemo(this.currentMemo, this.kvStore, this.getUIContext());
+      });
+
+      Divider()
+        .strokeWidth(1)
+        .margin({ left: 32 })
+        .color($r('sys.color.ohos_id_divider_color'));
+    };
+  }
+
+  @Builder
+  selectCategoryMenu() {
+    Scroll() {
+      Column() {
+        ForEach(
+          this.categoryService.getCategoryList(),
+          (category: UserCategory) => {
+            ListItem() {
+              this.moveCategoryItem(UIUtils.makeBinding(() => category));
+            }
+            .width('60%');
+          },
+          (category: UserCategory) => JSON.stringify(category),
+        );
+
+        Row() {
+          Text('新建文件夹')
+            .fontSize(13)
+            .fontColor('#EBAC24')
+            .fontWeight(FontWeight.Bold)
+            .onClick(() => {
+              // todo
+            });
+        }
+        .margin({ top: 16, bottom: 16 })
+        .justifyContent(FlexAlign.Start);
+      };
+    };
+  }
+
+  @Builder
+  memoInfoBar() {
+    Row({ space: 8 }) {
+      Row({ space: 8 }) {
+        Text(this.memoCateName(this.currentMemo))
+          .maxLines(1)
+          .fontSize(11)
+          .fontColor(Color.White)
+          .constraintSize({ maxWidth: 100 })
+          .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+        Image($r('app.media.arrowtriangle_down_fill'))
+          .width(10)
+          .height(10)
+          .fillColor(Color.White);
+      }
+      .padding(8)
+      .borderRadius('50%')
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor(this.memoCateColor(this.currentMemo))
+      .bindMenu(this.selectCategoryMenu);
+
+      Text(DateUtil.dateDisplay(this.currentMemo.updateTime))
+        .fontSize(10)
+        .fontColor($r('sys.color.font_secondary'));
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12 });
+  }
+
+  memoCateColor(memo: Memo): ResourceColor {
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (!category) {
+      return '#EBAC24';
+    } else {
+      return category.color;
+    }
+  }
+
+  memoCateName(memo: Memo): string {
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (!category) {
+      return '默认';
+    } else {
+      return category.name;
+    }
   }
 
   /**
@@ -752,13 +905,18 @@ export struct MemoEditorArea {
             .borderRadius(0)
             .margin({ top: 12 })
             .backgroundColor(Color.Transparent)
-            .onClick(() => {
-              this.saveStatusChange(false);
+            .onEditChange((status: boolean) => {
+              this.isEditingTitle = status;
             })
             .onChange((value) => {
               this.memoTitle = value;
               this.titleChange(value);
+            })
+            .onClick(() => {
+              this.saveStatusChange(false);
             });
+
+          this.memoInfoBar();
 
           // 录音条 / 播放条共用这一个插槽（标题与正文之间）：
           //   - 录音期间：只显示录音条，**不显示播放条**（需求 3）
@@ -778,7 +936,6 @@ export struct MemoEditorArea {
             .width('100%')
             .barState(BarState.Off)
             .focusable(!this.controller.isHandWrite)
-            .placeholder('开始书写你的笔记', { fontColor: $r('sys.color.font_tertiary') })
             .onReady(() => {
               // 重建内容期间会触发大量内容变更回调，必须先屏蔽历史记录
               this.controller.suspendHistory();
@@ -810,7 +967,7 @@ export struct MemoEditorArea {
               this.controller.refreshHeadMarkAvailability();
             })
             .onEditingChange((editStatus) => {
-              this.isEditing = editStatus;
+              this.isEditingContent = editStatus;
               this.saveStatusChange(false);
             })
             // 撤销/重做的捕获入口：变更【前】在此把两侧内容一次取齐（详见 onWillChange 的注释）
@@ -960,7 +1117,7 @@ export struct MemoEditorArea {
         //（HANDWRITE_TOOLBAR_HEIGHT 的注释里有说明）
         bottom: this.controller.isHandWrite
           ? (AppStorage.get('BottomRectHeight') as number) + HANDWRITE_TOOLBAR_HEIGHT
-          : (this.isEditing ? 8 : AppStorage.get('BottomRectHeight') as number)
+          : ((this.isEditingTitle || this.isEditingContent) ? 8 : AppStorage.get('BottomRectHeight') as number)
       });
     }
     .width('100%')

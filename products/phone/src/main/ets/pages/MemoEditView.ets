@@ -158,9 +158,13 @@ struct MemoEditView {
     NavDestination() {
       Column() {
         MemoEditorArea({
+          currentMemo: this.currentMemo,
           isMemoSaved: this.isMemoSaved,
           editingMemo: this.currentMemo,
           memoTitle: this.currentMemo.title,
+          moveCategory: (id: string) => {
+            this.currentMemo.categoryId = id;
+          },
           titleChange: (title: string) => {
             this.memoTitle = title;
           },

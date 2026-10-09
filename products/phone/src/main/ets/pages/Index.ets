@@ -408,9 +408,11 @@ struct Index {
       if (!this.isMultiChoice) {
         Column({ space: 5 }) {
           Text(this.currentHeader())
+            .maxLines(1)
             .fontSize(30)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.font_primary'));
+            .fontColor($r('sys.color.font_primary'))
+            .textOverflow({ overflow: TextOverflow.Ellipsis });
 
           if (this.currentMemoList.length > 0 && !this.isCardListScroll) {
             Text(`${this.currentMemoList.length} 条备忘`)
@@ -2313,11 +2315,15 @@ struct Index {
           .fillColor(category.value.color);
 
         Text(category.value.name)
+          .maxLines(1)
           .fontSize(13)
           .fontWeight(600)
           .fontColor($r('sys.color.font_primary'))
-          .opacity((this.isEditCategory && category.value.id === '-1') ? 0.3 : 1);
-      };
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .opacity((this.isEditCategory && category.value.id === '-1') ? 0.3 : 1)
+          .layoutWeight(1);
+      }
+      .layoutWeight(1);
 
       if (!this.isEditCategory) {
         Text(category.value.memoCount.toString())

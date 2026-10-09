@@ -485,10 +485,10 @@ export class Memo {
   @Trace isLocked: boolean = false;
   @Trace isFavorite: boolean = false;
   @Trace isSelected: boolean = false;
+  @Trace createTime: string = '';
+  @Trace updateTime: string = '';
+  @Trace categoryId: string = '-1';
   id: string = '';
-  createTime: string = '';
-  updateTime: string = '';
-  categoryId: string = '-1';
   memoBlockArr: Array<MemoBlock> = [];
   /**
    * 手写笔迹的文件名（不含目录），空串表示这条备忘没有笔迹。
@@ -497,7 +497,6 @@ export class Memo {
    * `save()` 是覆盖写，复用同一个名字就不会像图片那样每次保存都堆一份新文件。
    */
   inkFile: string = '';
-
   /**
    * 录音 PCM 的文件名（不含目录），空串表示这条备忘没有录音。
    *
@@ -514,7 +513,6 @@ export class Memo {
    *    **绝不能直接复用这个字段** —— 那样两条备忘会共写同一个文件。
    */
   audioFile: string = '';
-
   /**
    * **仅本次会话有效**的标记：这次编辑里用户主动删过录音。
    *
