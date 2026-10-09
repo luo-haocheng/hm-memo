@@ -1,3 +1,4 @@
+import { DateUtil } from 'util';
 import { FileChip, FileChipInfo, Memo } from 'memo_editor';
 import {
   CategoryService,
@@ -89,17 +90,17 @@ struct Index {
       let matchedKey = '更久之前';
       if (memo.pinTime !== '-1') {
         matchedKey = '置顶';
-      } else if (isSameDay(date)) {
+      } else if (DateUtil.isSameDay(date)) {
         matchedKey = '今天';
-      } else if (isYesterday(date)) {
+      } else if (DateUtil.isYesterday(date)) {
         matchedKey = '昨天';
-      } else if (isSameWeek(date)) {
+      } else if (DateUtil.isSameWeek(date)) {
         matchedKey = '本周';
-      } else if (isLastWeek(date)) {
+      } else if (DateUtil.isLastWeek(date)) {
         matchedKey = '上周';
-      } else if (isSameMonth(date)) {
+      } else if (DateUtil.isSameMonth(date)) {
         matchedKey = '本月';
-      } else if (isLastMonth(date)) {
+      } else if (DateUtil.isLastMonth(date)) {
         matchedKey = '上月';
       } else {
         matchedKey = '更久之前';
@@ -1078,7 +1079,7 @@ struct Index {
       Column() {
         Row() {
           Text(
-            dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
+            DateUtil.dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
               memo.value.createTime :
               memo.value.updateTime
             ))
@@ -1210,7 +1211,7 @@ struct Index {
 
         Row({ space: 5 }) {
           Text(
-            dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
+            DateUtil.dateDisplay(this.settingService.memoSortMethod === SortMethodEnum.CREATE_TIME ?
               memo.value.createTime :
               memo.value.updateTime
             ))
@@ -2589,75 +2590,4 @@ struct Index {
     .mode(NavigationMode.Stack)
     .backgroundColor($r('sys.color.background_secondary'));
   }
-}
-
-function isSameDay(date: Date): boolean {
-  const now = new Date();
-  if (now.getFullYear() !== date.getFullYear()) {
-    return false;
-  }
-  if (now.getMonth() !== date.getMonth()) {
-    return false;
-  }
-  if (now.getDate() !== date.getDate()) {
-    return false;
-  }
-  return true;
-}
-
-function isSameYear(date: Date): boolean {
-  const now = new Date();
-  return now.getFullYear() === date.getFullYear();
-}
-
-function isYesterday(date: Date): boolean {
-  const tmpDate = new Date(date);
-  tmpDate.setDate(date.getDate() + 1);
-  return isSameDay(tmpDate);
-}
-
-function isSameWeek(date: Date): boolean {
-  const now = new Date();
-  const todayMs = now.setHours(0, 0, 0, 0);
-  const nowDay = now.getDay() === 0 ? 7 : now.getDay();
-  const mondayMs = todayMs - (nowDay - 1) * 24 * 60 * 60 * 1000;
-  const sundayMs = todayMs + (8 - nowDay) * 24 * 60 * 60 * 1000;
-
-  if (date.getTime() >= mondayMs && date.getTime() < sundayMs) {
-    return true;
-  }
-
-  return false;
-}
-
-function isLastWeek(date: Date) {
-  const tmpDate = new Date(date);
-  tmpDate.setDate(tmpDate.getDate() + 7);
-  return isSameWeek(tmpDate);
-}
-
-function isSameMonth(date: Date): boolean {
-  const now = new Date();
-  return now.getFullYear() === date.getFullYear() && now.getMonth() === date.getMonth();
-}
-
-function isLastMonth(date: Date): boolean {
-  const tmpDate = new Date(date);
-  tmpDate.setMonth(tmpDate.getMonth() + 1);
-  return isSameMonth(tmpDate);
-}
-
-function dateDisplay(dateStr: string): string {
-  const date = new Date(parseInt(dateStr));
-  if (isSameDay(date)) {
-    return `今天 ${date.getHours()}:${date.getMinutes()}`;
-  }
-  if (isYesterday(date)) {
-    return `昨天 ${date.getHours()}:${date.getMinutes()}`;
-  }
-  if (isSameYear(date)) {
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
-  }
-
-  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
 }
