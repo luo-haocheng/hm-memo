@@ -1116,7 +1116,7 @@ struct Index {
 
         Row({ space: 6 }) {
           if (memo.value.isLocked) {
-            Image($r('app.media.lock_fill'))
+            Image(memo.value.isEnableLock ? $r('app.media.lock_fill') : $r('app.media.lock_open_fill'))
               .width(12)
               .height(12)
               .fillColor($r('sys.color.font_secondary'));
@@ -1224,7 +1224,7 @@ struct Index {
 
           Row({ space: 5 }) {
             if (memo.value.isLocked) {
-              Image($r('app.media.lock_fill'))
+              Image(memo.value.isEnableLock ? $r('app.media.lock_fill') : $r('app.media.lock_open_fill'))
                 .width(12)
                 .height(12)
                 .fillColor($r('sys.color.font_secondary'));

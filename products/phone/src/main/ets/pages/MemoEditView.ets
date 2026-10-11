@@ -2,6 +2,8 @@ import { Memo, MemoEditorArea, MemoEditorController, resolveInkPath } from 'memo
 import { KVStore, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 import { util } from '@kit.ArkTS';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
+import { userAuth } from '@kit.UserAuthenticationKit';
 
 @Builder
 export function MemoEditBuilder() {
@@ -26,6 +28,51 @@ struct MemoEditView {
     // 真正的历史基线在编辑器 onReady（内容重建完成）之后才建立
     this.editorController.resetHistory();
     this.editorController.initState();
+  }
+
+  private async getRandom(len: number): Promise<Uint8Array | undefined> {
+    try {
+      let rand = cryptoFramework.createRandom();
+      let result = await rand.generateRandom(len);
+      return result.data;
+    } catch (error) {
+      console.error(`Failed to generate random. Cause: ${JSON.stringify(error)}`);
+      return undefined;
+    }
+  }
+
+  private async userAuth() {
+    try {
+      const randData = await this.getRandom(32);
+      if (!randData) {
+        return;
+      }
+      // 设置认证参数
+      const authParam: userAuth.AuthParam = {
+        challenge: randData,
+        authTrustLevel: userAuth.AuthTrustLevel.ATL3,
+        authType: [userAuth.UserAuthType.FACE, userAuth.UserAuthType.FINGERPRINT, userAuth.UserAuthType.PIN],
+      };
+      // 配置认证界面
+      const widgetParam: userAuth.WidgetParam = {
+        title: '用于解锁保险柜'
+      };
+      // 获取认证对象
+      const userAuthInstance = userAuth.getUserAuthInstance(authParam, widgetParam);
+      // 订阅认证结果
+      userAuthInstance.on('result', {
+        onResult: (result: userAuth.UserAuthResult) => {
+          if (result.result === userAuth.UserAuthResultCode.SUCCESS) {
+            this.currentMemo.isEnableLock = false;
+            this.memoService.enableMemoLock(this.currentMemo.id, false, this.kvStore, this.uiContext);
+          }
+          userAuthInstance.off('result');
+        }
+      });
+      userAuthInstance.start();
+    } catch (error) {
+      console.error(`Initial UserAuth failed. Cause: ${JSON.stringify(error)}`);
+    }
   }
 
   @Builder
@@ -83,6 +130,29 @@ struct MemoEditView {
       .height('100%')
       .margin({ right: 16 })
       .justifyContent(FlexAlign.Center);
+    } else if (this.currentMemo.isLocked) {
+      Row({ space: 12 }) {
+        Button({ type: ButtonType.Circle }) {
+          Image(this.currentMemo.isEnableLock ? $r('app.media.lock') : $r('app.media.lock_open'))
+            .fillColor($r('sys.color.font_primary'));
+        }
+        .width(40)
+        .height(40)
+        .padding(8)
+        .backgroundColor($r('sys.color.background_secondary'))
+        .onClick(() => {
+          if (this.currentMemo.isEnableLock) {
+            this.userAuth();
+          } else {
+            this.currentMemo.isEnableLock = true;
+            this.memoService.enableMemoLock(this.currentMemo.id, true, this.kvStore, this.uiContext);
+          }
+        });
+      }
+      .width(150)
+      .height('100%')
+      .margin({ right: 16 })
+      .justifyContent(FlexAlign.End);
     }
   }
 
@@ -154,22 +224,65 @@ struct MemoEditView {
     this.currentMemo.inkFile = saved ? name : '';
   }
 
+  @Builder
+  shieldView() {
+    Stack() {
+      Column({ space: 18 }) {
+        Image($r('app.media.info_shield'))
+          .width(80)
+          .height(80)
+          .fillColor($r('sys.color.font_fourth'));
+
+        Text('此备忘已锁定')
+          .fontSize(14)
+          .fontColor($r('sys.color.font_fourth'));
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ bottom: AppStorage.get('BottomRectHeight') as number });
+
+      Column() {
+        Button('解锁')
+          .width('100%')
+          .fontSize(14)
+          .fontColor('#EBAC24')
+          .backgroundColor($r('sys.color.background_secondary'))
+          .onClick(() => {
+            this.userAuth();
+          });
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.End)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 12, right: 12, bottom: AppStorage.get('BottomRectHeight') as number });
+    }
+    .width('100%')
+    .height('100%');
+  }
+
   build() {
     NavDestination() {
       Column() {
-        MemoEditorArea({
-          currentMemo: this.currentMemo,
-          isMemoSaved: this.isMemoSaved,
-          editingMemo: this.currentMemo,
-          isNewMemo: !this.isEditMemo,
-          memoTitle: this.currentMemo.title,
-          titleChange: (title: string) => {
-            this.memoTitle = title;
-          },
-          saveStatusChange: (isSave: boolean) => {
-            this.isMemoSaved = isSave;
-          }
-        });
+        if (this.currentMemo.isLocked && this.currentMemo.isEnableLock) {
+          this.shieldView();
+        } else {
+          MemoEditorArea({
+            currentMemo: this.currentMemo,
+            isMemoSaved: this.isMemoSaved,
+            editingMemo: this.currentMemo,
+            isNewMemo: !this.isEditMemo,
+            memoTitle: this.currentMemo.title,
+            titleChange: (title: string) => {
+              this.memoTitle = title;
+            },
+            saveStatusChange: (isSave: boolean) => {
+              this.isMemoSaved = isSave;
+            }
+          });
+        }
       }
       .width('100%')
       .height('100%');

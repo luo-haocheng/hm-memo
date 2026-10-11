@@ -524,11 +524,25 @@ export class MemoService {
       return;
     }
     memo.isLocked = isLocked;
+    memo.isEnableLock = isLocked;
 
     if (kvStore && uiContext) {
       putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
     }
   }
+
+  public enableMemoLock(memoId: string, isEnable: boolean, kvStore?: KVStore, uiContext?: UIContext) {
+    const memo = this.memoList.find(item => item.id === memoId);
+    if (!memo) {
+      return;
+    }
+    memo.isEnableLock = isEnable;
+
+    if (kvStore && uiContext) {
+      putMemoInKvStore(memo, kvStore, 'EffectiveMemo');
+    }
+  }
+
 
   /**
    * 删除笔记
@@ -673,6 +687,7 @@ export class MemoService {
     memo.title = serializedMemo.title;
     memo.pinTime = serializedMemo.pinTime;
     memo.isLocked = serializedMemo.isLocked;
+    memo.isEnableLock = serializedMemo.isEnableLock;
     memo.isFavorite = serializedMemo.isFavorite;
     memo.categoryId = serializedMemo.categoryId;
     memo.createTime = serializedMemo.createTime;

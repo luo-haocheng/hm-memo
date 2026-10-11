@@ -483,6 +483,7 @@ export class Memo {
   @Trace description: string = '';
   @Trace pinTime: string = '-1';
   @Trace isLocked: boolean = false;
+  @Trace isEnableLock: boolean = false;
   @Trace isFavorite: boolean = false;
   @Trace isSelected: boolean = false;
   @Trace createTime: string = '';
