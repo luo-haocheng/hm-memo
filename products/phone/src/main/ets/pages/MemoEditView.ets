@@ -15,6 +15,7 @@ struct MemoEditView {
   @Local memoTitle: string = '';
   @Local isEditMemo: boolean = false;
   @Local isMemoSaved: boolean = true;
+  @Local isDeletedMemo: boolean = false;
   @Local currentMemo: Memo = new Memo();
   @Consumer() kvStore: KVStore | undefined = undefined;
   uiContext: UIContext = this.getUIContext() as UIContext;
@@ -270,6 +271,7 @@ struct MemoEditView {
           this.shieldView();
         } else {
           MemoEditorArea({
+            isDeletedMemo: this.isDeletedMemo,
             currentMemo: this.currentMemo,
             isMemoSaved: this.isMemoSaved,
             editingMemo: this.currentMemo,
@@ -309,6 +311,7 @@ struct MemoEditView {
         this.isEditMemo = true;
         let currentMemo: Memo | undefined = undefined;
         if (sysCategory === SystemCategory.DELETED_MEMO) {
+          this.isDeletedMemo = true;
           currentMemo = this.memoService.getDeletedMemoById(memoId);
         } else {
           currentMemo = this.memoService.getMemoById(memoId);

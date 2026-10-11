@@ -86,6 +86,7 @@ export struct MemoEditorArea {
   @Local dragPositionMs: number = -1;
   @Param @Require currentMemo: Memo;
   @Param @Require isMemoSaved: boolean;
+  @Param @Require isDeletedMemo: boolean;
   @Param @Once @Require memoTitle: string;
   @Param @Once @Require editingMemo: Memo;
   @Param @Once @Require isNewMemo: boolean;
@@ -367,62 +368,107 @@ export struct MemoEditorArea {
 
   @Builder
   memoToolBar() {
-    Flex({
-      justifyContent: FlexAlign.SpaceBetween,
-      alignItems: ItemAlign.Center,
-    }) {
-      Image($r('app.media.share'))
-        .width(24)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          // todo
-        });
+    if (this.isDeletedMemo) {
+      Flex({
+        justifyContent: FlexAlign.SpaceBetween,
+        alignItems: ItemAlign.Center,
+      }) {
+        Image($r('app.media.arrow_counterclockwise'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            this.memoService.recoverMemo(this.currentMemo.id, this.kvStore, this.getUIContext());
+            this.appPathStack.pop();
+          });
 
-      Image(this.currentMemo.isFavorite ? $r('app.media.star_fill') : $r('app.media.star'))
-        .width(24)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(() => {
-          const memoId = this.currentMemo.id;
-          this.currentMemo.isFavorite = !this.currentMemo.isFavorite;
-          this.memoService.collectMemo(memoId, this.currentMemo.isFavorite, this.kvStore, this.getUIContext());
-        });
+        Image($r('app.media.trash'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(async () => {
+            let confirmed = false;
+            const uiContext = this.getUIContext();
+            try {
+              const result = await uiContext.getPromptAction().showDialog({
+                message: '是否永久删除备忘？删除后不可恢复!',
+                buttons: [
+                  { text: '取消', color: $r('sys.color.font_primary') },
+                  { text: '删除', color: $r('sys.color.warning') },
+                ],
+              });
+              confirmed = result.index === 1;
+            } catch (error) {
+              console.info(`[record] 删除确认框未确认: ${JSON.stringify(error)}`);
+            }
 
-      Image($r('app.media.trash'))
-        .width(24)
-        .fillColor($r('sys.color.font_primary'))
-        .onClick(async () => {
-          // todo
-          let confirmed = false;
-          const uiContext = this.getUIContext();
-          try {
-            const result = await uiContext.getPromptAction().showDialog({
-              message: '是否删除备忘？删除后可在“最近删除”恢复',
-              // Button 的 color 是**必填**的（`text` 与 `color` 都不可省）
-              buttons: [
-                { text: '取消', color: $r('sys.color.font_primary') },
-                { text: '删除', color: $r('sys.color.warning') },
-              ],
-            });
-            confirmed = result.index === 1;
-          } catch (error) {
-            console.info(`[record] 删除确认框未确认: ${JSON.stringify(error)}`);
-          }
+            if (!confirmed) {
+              return;
+            }
 
-          if (!confirmed) {
-            return;
-          }
+            this.memoService.deletePermanently(this.currentMemo.id, this.kvStore);
 
-          const memoId = this.currentMemo.id;
-          const categoryId = this.currentMemo.categoryId;
-          this.memoService.deleteMemoToTrash(memoId, categoryId, this.kvStore, this.getUIContext());
+            this.appPathStack.pop();
+          });
+      }
+      .padding(12)
+      .width('30%')
+      .borderRadius('50%')
+      .backgroundColor($r('sys.color.background_tertiary'));
+    } else {
+      Flex({
+        justifyContent: FlexAlign.SpaceBetween,
+        alignItems: ItemAlign.Center,
+      }) {
+        Image($r('app.media.share'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            // todo
+          });
 
-          this.appPathStack.pop();
-        });
+        Image(this.currentMemo.isFavorite ? $r('app.media.star_fill') : $r('app.media.star'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(() => {
+            const memoId = this.currentMemo.id;
+            this.currentMemo.isFavorite = !this.currentMemo.isFavorite;
+            this.memoService.collectMemo(memoId, this.currentMemo.isFavorite, this.kvStore, this.getUIContext());
+          });
+
+        Image($r('app.media.trash'))
+          .width(24)
+          .fillColor($r('sys.color.font_primary'))
+          .onClick(async () => {
+            let confirmed = false;
+            const uiContext = this.getUIContext();
+            try {
+              const result = await uiContext.getPromptAction().showDialog({
+                message: '是否删除备忘？删除后可在“最近删除”恢复',
+                buttons: [
+                  { text: '取消', color: $r('sys.color.font_primary') },
+                  { text: '删除', color: $r('sys.color.warning') },
+                ],
+              });
+              confirmed = result.index === 1;
+            } catch (error) {
+              console.info(`[record] 删除确认框未确认: ${JSON.stringify(error)}`);
+            }
+
+            if (!confirmed) {
+              return;
+            }
+
+            const memoId = this.currentMemo.id;
+            const categoryId = this.currentMemo.categoryId;
+            this.memoService.deleteMemoToTrash(memoId, categoryId, this.kvStore, this.getUIContext());
+
+            this.appPathStack.pop();
+          });
+      }
+      .padding(12)
+      .width('50%')
+      .borderRadius('50%')
+      .backgroundColor($r('sys.color.background_tertiary'));
     }
-    .padding(12)
-    .width('50%')
-    .borderRadius('50%')
-    .backgroundColor($r('sys.color.background_tertiary'));
   }
 
   @Builder
@@ -637,7 +683,7 @@ export struct MemoEditorArea {
     .borderRadius(12)
     .alignItems(VerticalAlign.Center)
     .margin({ top: 12, left: 12, right: 12 })
-    .backgroundColor($r('sys.color.background_secondary'));
+    .backgroundColor($r('sys.color.ohos_fa_sub_background'));
   }
 
   /**
@@ -693,43 +739,50 @@ export struct MemoEditorArea {
         .fontSize(8)
         .fontColor($r('sys.color.font_secondary'));
 
-      Image($r('app.media.dot_grid_1x2'))
-        .width(24)
-        .height(24)
-        .fillColor($r('sys.color.font_primary'))
-        .bindMenu([
-          {
-            value: '保存',
-            action: () => {
-              // 导出成 WAV 存到用户选定的位置（与工具栏那个"保存备忘"不是一回事）
-              this.controller.exportRecording(this.getUIContext())
-                .catch((error: BusinessError) => {
-                  console.error(`[export] 导出时未捕获的异常: ${JSON.stringify(error)}`);
-                });
+      if (this.isDeletedMemo) {
+        Image($r('app.media.dot_grid_1x2'))
+          .width(24)
+          .height(24)
+          .fillColor($r('sys.color.font_tertiary'));
+      } else {
+        Image($r('app.media.dot_grid_1x2'))
+          .width(24)
+          .height(24)
+          .fillColor($r('sys.color.font_primary'))
+          .bindMenu([
+            {
+              value: '保存',
+              action: () => {
+                // 导出成 WAV 存到用户选定的位置（与工具栏那个"保存备忘"不是一回事）
+                this.controller.exportRecording(this.getUIContext())
+                  .catch((error: BusinessError) => {
+                    console.error(`[export] 导出时未捕获的异常: ${JSON.stringify(error)}`);
+                  });
+              }
+            },
+            {
+              value: '删除',
+              action: () => {
+                this.controller.deleteRecording(this.getUIContext(), this.editingMemo)
+                  .then((deleted: boolean) => {
+                    if (deleted) {
+                      // 标记成未保存，工具栏才会浮出保存勾号 —— 用户得知道要去保存
+                      this.saveStatusChange(false);
+                    }
+                  })
+                  .catch((error: BusinessError) => {
+                    console.error(`[record] 删除录音时未捕获的异常: ${JSON.stringify(error)}`);
+                  });
+              }
             }
-          },
-          {
-            value: '删除',
-            action: () => {
-              this.controller.deleteRecording(this.getUIContext(), this.editingMemo)
-                .then((deleted: boolean) => {
-                  if (deleted) {
-                    // 标记成未保存，工具栏才会浮出保存勾号 —— 用户得知道要去保存
-                    this.saveStatusChange(false);
-                  }
-                })
-                .catch((error: BusinessError) => {
-                  console.error(`[record] 删除录音时未捕获的异常: ${JSON.stringify(error)}`);
-                });
-            }
-          }
-        ]);
+          ]);
+      }
     }
     .padding(8)
     .borderRadius(12)
     .alignItems(VerticalAlign.Center)
     .margin({ top: 12, left: 12, right: 12 })
-    .backgroundColor($r('sys.color.background_secondary'));
+    .backgroundColor($r('sys.color.ohos_fa_sub_background'));
   }
 
   @Builder
@@ -823,24 +876,39 @@ export struct MemoEditorArea {
   @Builder
   memoInfoBar() {
     Row({ space: 8 }) {
-      Row({ space: 8 }) {
-        Text(this.memoCateName(this.currentMemo))
-          .maxLines(1)
-          .fontSize(11)
-          .fontColor(Color.White)
-          .constraintSize({ maxWidth: 100 })
-          .textOverflow({ overflow: TextOverflow.Ellipsis });
+      if (this.isDeletedMemo) {
+        Row({ space: 8 }) {
+          Text(this.memoCateName(this.currentMemo))
+            .maxLines(1)
+            .fontSize(11)
+            .fontColor(Color.White)
+            .constraintSize({ maxWidth: 100 })
+            .textOverflow({ overflow: TextOverflow.Ellipsis });
+        }
+        .padding(8)
+        .borderRadius('50%')
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.memoCateColor(this.currentMemo));
+      } else {
+        Row({ space: 8 }) {
+          Text(this.memoCateName(this.currentMemo))
+            .maxLines(1)
+            .fontSize(11)
+            .fontColor(Color.White)
+            .constraintSize({ maxWidth: 100 })
+            .textOverflow({ overflow: TextOverflow.Ellipsis });
 
-        Image($r('app.media.arrowtriangle_down_fill'))
-          .width(10)
-          .height(10)
-          .fillColor(Color.White);
+          Image($r('app.media.arrowtriangle_down_fill'))
+            .width(10)
+            .height(10)
+            .fillColor(Color.White);
+        }
+        .padding(8)
+        .borderRadius('50%')
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.memoCateColor(this.currentMemo))
+        .bindMenu(this.selectCategoryMenu);
       }
-      .padding(8)
-      .borderRadius('50%')
-      .alignItems(VerticalAlign.Center)
-      .backgroundColor(this.memoCateColor(this.currentMemo))
-      .bindMenu(this.selectCategoryMenu);
 
       Text(DateUtil.dateDisplay(this.currentMemo.updateTime))
         .fontSize(10)
@@ -959,6 +1027,7 @@ export struct MemoEditorArea {
             .fontSize(20)
             .fontWeight(FontWeight.Bold)
             .defaultFocus(this.isNewMemo)
+            .enabled(!this.isDeletedMemo)
             .fontColor($r('sys.color.font_primary'))
             .focusable(!this.controller.isHandWrite)
             .placeholderColor($r('sys.color.font_secondary'))
@@ -996,6 +1065,7 @@ export struct MemoEditorArea {
           RichEditor({ controller: this.controller.contentController })
             .width('100%')
             .barState(BarState.Off)
+            .enabled(!this.isDeletedMemo)
             .focusable(!this.controller.isHandWrite)
             .onReady(() => {
               // 重建内容期间会触发大量内容变更回调，必须先屏蔽历史记录
@@ -1139,7 +1209,8 @@ export struct MemoEditorArea {
             // 它的父节点是「裁剪窗口」，高度会随模式变；写成 100% 就等于让组件跟着变高变矮，
             // 组件会被重新量尺、笔迹被缩放（不变量 ① 被破坏）。
             // 恒定的组件高度 + 可变的裁剪窗口，这个分工是整套方案的关键
-            .height(this.handwriteCanvasHeight());
+            .height(this.handwriteCanvasHeight())
+            .enabled(!this.isDeletedMemo);
         }
         .width('100%')
         .height(this.handwriteLayerHeight())

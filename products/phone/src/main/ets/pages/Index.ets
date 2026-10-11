@@ -1012,6 +1012,24 @@ struct Index {
     FileChip({ info: info });
   }
 
+  memoCateColor(memo: Memo): ResourceColor {
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (!category) {
+      return '#EBAC24';
+    } else {
+      return category.color;
+    }
+  }
+
+  memoCateName(memo: Memo): string {
+    const category = this.categoryService.getCategoryById(memo.categoryId);
+    if (!category) {
+      return '默认';
+    } else {
+      return category.name;
+    }
+  }
+
   @Builder
   memoPreview(memo: Memo) {
     Column() {
@@ -1021,13 +1039,41 @@ struct Index {
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('sys.color.font_primary'))
-        .textOverflow({ overflow: TextOverflow.Ellipsis });
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .opacity(this.curSystemCategory !== SystemCategory.DELETED_MEMO ? 1 : 0.4);
+
+      Row({ space: 8 }) {
+        Row({ space: 8 }) {
+          Text(this.memoCateName(memo))
+            .maxLines(1)
+            .fontSize(11)
+            .fontColor(Color.White)
+            .constraintSize({ maxWidth: 100 })
+            .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+          Image($r('app.media.arrowtriangle_down_fill'))
+            .width(10)
+            .height(10)
+            .fillColor(Color.White);
+        }
+        .padding(8)
+        .borderRadius('50%')
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.memoCateColor(memo));
+
+        Text(DateUtil.dateDisplay(memo.updateTime))
+          .fontSize(10)
+          .fontColor($r('sys.color.font_secondary'));
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12 });
 
       RichEditor({ controller: this.previewTextController })
         .width('100%')
         .barState(BarState.Off)
         .padding({ left: 0, right: 0 })
         .hitTestBehavior(HitTestMode.None)
+        .enabled(this.curSystemCategory !== SystemCategory.DELETED_MEMO)
         .onReady(() => {
           // 预览是只读的（上面 hitTestBehavior 为 None），待办勾选框点不动，给个空实现
           memo.rebuildContent(this.previewTextController, this.getUIContext(), () => {
