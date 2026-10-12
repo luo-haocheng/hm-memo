@@ -1,13 +1,13 @@
 import { AlignmentInfo } from '../model/AlignmentInfo';
 import { FileChipInfo } from '../model/FileChipInfo';
 import {
+  attachmentInfoOf,
   ATTACHMENT_DIR_NAME,
   builtinImageNameOf,
   builtinImageResource,
   builtinImageStyle,
   calcDesiredSize,
   doneTextColor,
-  isBuilderSpan,
   Memo,
   MemoBlock,
   mimeOfFileName,
@@ -22,7 +22,14 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { fileIo, fileUri, picker } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { ChangeRecord, SpanSnapshot } from '../model/ChangeRecord';
-import { clipSpans, isTextLikeSpan, spansTotalLength, textStyleResult2Style, toSnapshots } from '../model/SpanMapping';
+import {
+  clipSpans,
+  isBuilderSpan,
+  isTextLikeSpan,
+  spansTotalLength,
+  textStyleResult2Style,
+  toSnapshots
+} from '../model/SpanMapping';
 import {
   indentLevelOf,
   indentMarginFor,
@@ -747,12 +754,22 @@ export class MemoEditorController {
    * 对备忘录这种没有超长段落的场景，换来的是"无待配对状态、可单点调试"。
    */
   onWillChange(value: RichEditorChangeValue) {
+    // 附件侧表在变更【前】的副本：chip 的文件名只能从这里取（span 里没有），
+    // 而下面 trackAttachmentDelete 会就地删掉命中那条 —— 所以副本必须留在它之前。
+    // 撤销/重做期间不建记录，也就用不上副本
+    const preAttachments = (this.isRestoring || this.attachments.length === 0)
+      ? [] : this.attachments.slice();
+
+    // 附件删除跟踪：必须放在下面所有早返回【之前】—— 删掉附件是全链路里
+    // 唯一能得知"哪个附件没了"的时机（插附件不触发任何回调，删附件才触发）。
+    // ⚠️ **也必须在 isRestoring 守卫之前**：撤销/重做删掉的 chip 同样是真实的内容变更，
+    // 不销账就会在侧表里留下指向空格子的条目（与 trackAttachmentShift 同一理由，见它的注释）。
+    // 重建期间由 trackAttachmentDelete 内部按 isRebuilding 自行跳过
+    this.trackAttachmentDelete(value.rangeBefore);
+
     if (this.isRestoring) {
       return;
     }
-    // 附件删除跟踪：必须放在下面所有早返回【之前】—— 删掉附件是全链路里
-    // 唯一能得知"哪个附件没了"的时机（插附件不触发任何回调，删附件才触发）
-    this.trackAttachmentDelete(value.rangeBefore);
 
     const rangeStart = value.rangeBefore.start ?? 0;
     const rangeEnd = value.rangeBefore.end ?? 0;
@@ -805,6 +822,8 @@ export class MemoEditorController {
       record.afterSpans = [];
     } else {
       // ---- 插入 / 替换：旧侧取「变更位置所在的整 span」，与新侧的整 span 配对 ----
+      // 实测：`getSpans(range)` 回的是**含区间起点**的那一个 span（与 `end` 无关），
+      // 所以这里传 `rangeEnd` 还是 `rangeEnd + 1` 结果一样，别指望靠加宽读区间取到右邻
       const beforeRaw = this.contentController.getSpans({ start: rangeStart, end: rangeEnd });
       record.beforeSpans = toSnapshots(beforeRaw);
       record.beforeStart = beforeRaw.length > 0 ? minSpanStart(beforeRaw) : rangeStart;
@@ -869,7 +888,52 @@ export class MemoEditorController {
     const delta = spansTotalLength(record.afterSpans) - spansTotalLength(record.beforeSpans);
     record.caretAfter = rangeStart + (delta > 0 ? delta : 0);
 
+    // 附件 chip 的身份只能在**这里**补：它的 span 里没有文件名，得拿坐标去侧表反查
+    this.fillBuilderPaths(record, preAttachments);
+
     this.pushRecord(record);
+  }
+
+  /**
+   * 给记录两侧的附件快照补上文件身份（`value` = 相对路径）。
+   *
+   * chip 的 span 里**没有文件名**（`valueResourceStr` 只是个占位空格），身份只有附件侧表有 ——
+   * 所以快照层只记下 chip 的坐标（`SpanSnapshot.offset`），由这里反查补上。
+   *
+   * 【为什么按坐标相等匹配就够】快照里的 `offset` 是**变更前**的坐标，而传进来的 `table`
+   * 也是变更前的侧表副本 —— 同一时刻、同一套坐标，直接相等比较即可，不需要任何推算。
+   *
+   * ⚠️ **查不到就要报错**，不能静默留空串：那说明存在"chip 已经进了记录、却还没登记进侧表"
+   * 的时序漏洞（`addFileChip` 里 `registerAttachment` 的位置一度就是如此）。留空串的话，
+   * 重放会把它当成"无路径"静默跳过，用户只看到"重做后附件不见了"，无从排查。
+   */
+  private fillBuilderPaths(record: ChangeRecord, table: Array<AttachmentEntry>): void {
+    this.fillBuilderPathsIn(record.beforeSpans, table);
+    this.fillBuilderPathsIn(record.afterSpans, table);
+  }
+
+  private fillBuilderPathsIn(spans: Array<SpanSnapshot>, table: Array<AttachmentEntry>): void {
+    for (const span of spans) {
+      // 只处理还没补过的附件快照
+      if (span.kind !== 'builder' || span.value !== '') {
+        continue;
+      }
+      const offset = span.offset;
+      let matched: AttachmentEntry | undefined = undefined;
+      if (offset !== undefined) {
+        for (const entry of table) {
+          if (entry.offset === offset) {
+            matched = entry;
+            break;
+          }
+        }
+      }
+      if (matched === undefined) {
+        console.error(`[file] 附件快照在侧表里找不到对应项（offset=${offset}），重放时会跳过这个 chip`);
+        continue;
+      }
+      span.value = matched.relativePath;
+    }
   }
 
   /**
@@ -953,8 +1017,16 @@ export class MemoEditorController {
     const markerCollapse = this.pendingMarkerCollapse;
     this.pendingMarkerCollapse = undefined;
     // 重建内容 / 撤销重做期间不插手：那些变更不来自用户编辑。
-    // isRepairing 是防递归 —— 下面补换行会同步触发一轮 willChange / didChange
-    if (this.isRestoring || this.isRepairing) {
+    // isRepairing 是防递归 —— 下面补换行会同步触发一轮 willChange / didChange。
+    //
+    // ⚠️ **`atomicDepth > 0` 也要挡掉**：原子区间是"一次程序化的复合操作"（插图 / 插附件 /
+    // 换列表标记），那些操作**自己**就会把段落收拾好；维护在中间插一手只会重复劳动。
+    // 实测 `addImage`：它自己会补尾换行，而图片那次 onDidChange 触发的维护在那一刻
+    // 还没看到尾换行（右侧文字正贴着图片），于是**也**补了一个 —— 图片后面多出一个换行，
+    // 而那条多出来的记录新侧只覆盖到它自己那两格、尾部文字没被带上，
+    // `mergeIntoTop` 取前导时就把尾部整段丢掉 → 撤销删不到 → 内容残留
+    //（`abcdef` 中间插图 → 撤销得 `abcdefdef`）
+    if (this.isRestoring || this.isRepairing || this.atomicDepth > 0) {
       return;
     }
     // 回车新建的一段，上一段是待办的话把它也变成待办。
@@ -1134,16 +1206,21 @@ export class MemoEditorController {
   }
 
   /**
-   * 撤销。需要 uiContext 是因为图片快照的样式要在恢复时重算（用得到 px2vp）
+   * 撤销。
+   *
+   * @param uiContext 图片快照的样式要在恢复时重算（用得到 px2vp）
+   * @param buildChip 重建附件 chip 的工厂。`addBuilderSpan` 只收零参 `CustomBuilder`，
+   *   而 builder 必须在组件作用域里造（要闭包组件的 this 与 UI 上下文）——
+   *   所以只能由组件传进来，控制器不构造、也不保存它（存下会把组件实例吊住）
    */
-  unDo(uiContext: UIContext) {
+  unDo(uiContext: UIContext, buildChip: (info: FileChipInfo) => CustomBuilder) {
     if (this.isRestoring || this.currRecordIdx < 1) {
       return;
     }
     const record = this.historyRecords[this.currRecordIdx];
     this.isRestoring = true;
     try {
-      this.applyRecord(record, true, uiContext);
+      this.applyRecord(record, true, uiContext, buildChip);
       this.currRecordIdx -= 1;
     } catch (error) {
       console.error(`[undo] 撤销失败: ${JSON.stringify(error)}`);
@@ -1153,14 +1230,14 @@ export class MemoEditorController {
   }
 
   /** 重做 */
-  reDo(uiContext: UIContext) {
+  reDo(uiContext: UIContext, buildChip: (info: FileChipInfo) => CustomBuilder) {
     if (this.isRestoring || this.currRecordIdx >= this.historyLength - 1) {
       return;
     }
     const record = this.historyRecords[this.currRecordIdx + 1];
     this.isRestoring = true;
     try {
-      this.applyRecord(record, false, uiContext);
+      this.applyRecord(record, false, uiContext, buildChip);
       this.currRecordIdx += 1;
     } catch (error) {
       console.error(`[undo] 重做失败: ${JSON.stringify(error)}`);
@@ -1373,7 +1450,8 @@ export class MemoEditorController {
    * 顺序必须是"先删后插"：先删掉对侧占用的整个范围，再把本侧内容插到本侧起点；
    * 反过来先插会把后面的坐标整体右移。
    */
-  private applyRecord(record: ChangeRecord, useBefore: boolean, uiContext: UIContext) {
+  private applyRecord(record: ChangeRecord, useBefore: boolean, uiContext: UIContext,
+    buildChip: (info: FileChipInfo) => CustomBuilder) {
     // 样式类记录不碰内容：段落样式是段落级属性，删了重插会把段落拆开 / 合并
     if (record.kind === 'textStyle') {
       const rangeLength = spansTotalLength(record.beforeSpans);
@@ -1405,7 +1483,7 @@ export class MemoEditorController {
     if (removeLength > 0) {
       this.contentController.deleteSpans({ start: removeStart, end: removeStart + removeLength });
     }
-    this.insertSpans(spans, insertStart, uiContext);
+    this.insertSpans(spans, insertStart, uiContext, buildChip);
     this.contentController.setCaretOffset(caret);
   }
 
@@ -1475,8 +1553,15 @@ export class MemoEditorController {
     return record;
   }
 
-  /** 按顺序把一组快照插回编辑器。游标用快照自带的 length 推进，不依赖 span 之间无缝衔接 */
-  private insertSpans(spans: Array<SpanSnapshot>, start: number, uiContext: UIContext) {
+  /**
+   * 按顺序把一组快照插回编辑器。游标用快照自带的 length 推进，不依赖 span 之间无缝衔接。
+   *
+   * ⚠️ **附件（builder）必须显式分支**：chip 在形状上就是个 image span，
+   * 落到下面那个 `else` 里会因 `imageResource` 是个占位空格而走内置图分支、
+   * `addImageSpan(" ")` —— 那正是 FILE_ATTACHMENT_REVIEW.md §六 那个损坏正文的 bug。
+   */
+  private insertSpans(spans: Array<SpanSnapshot>, start: number, uiContext: UIContext,
+    buildChip: (info: FileChipInfo) => CustomBuilder) {
     let cursor = start;
     for (const span of spans) {
       if (span.kind === 'text') {
@@ -1485,11 +1570,40 @@ export class MemoEditorController {
           style: span.textStyle,
           paragraphStyle: span.paragraphStyle,
         });
+      } else if (span.kind === 'builder') {
+        this.insertBuilderSpan(span, cursor, uiContext, buildChip);
       } else {
         this.insertImageSpan(span, cursor, uiContext);
       }
+      // 即使某一块被跳过（图片缺 PixelMap / 附件副本缺失）也照旧推进 ——
+      // 与图片的既有约定一致，让后续内容的落点可预期
       cursor += span.length;
     }
+  }
+
+  /**
+   * 插回一个附件 chip（撤销 / 重做专用）。
+   *
+   * 副本缺失时**整块跳过**（日志由 `attachmentInfoOf` 记）—— 与重建那条路径同款约定：
+   * 宁可少一个 chip，也不插一个点了打不开的死 chip。
+   *
+   * 插完**必须立刻登记侧表**：`addBuilderSpan` 不触发任何内容回调（实测），侧表不会自跟踪；
+   * 而后面几条快照还会继续改动文档、推着侧表往前走 —— 不登记就会漏掉这一项。
+   */
+  private insertBuilderSpan(span: SpanSnapshot, offset: number, uiContext: UIContext,
+    buildChip: (info: FileChipInfo) => CustomBuilder) {
+    const relativePath = span.value;
+    if (relativePath === '') {
+      // 捕获时就没能补上身份（见 fillBuilderPaths 的告警）—— 插不了，只能跳过
+      console.error(`[undo] 附件快照没有文件路径，跳过这个 chip`);
+      return;
+    }
+    const info = attachmentInfoOf(uiContext, relativePath);
+    if (info === undefined) {
+      return; // 副本缺失，原因已在 attachmentInfoOf 内部记过日志
+    }
+    this.contentController.addBuilderSpan(buildChip(info), { offset: offset });
+    this.registerAttachment(offset, relativePath);
   }
 
   /**
@@ -3771,7 +3885,26 @@ export class MemoEditorController {
         chipOffset += 1;
       }
 
+      // ⚠️ 旧侧必须在**插入之前**读：这一刻 chip 还没进文档，
+      // 读到的正是它要占掉的那个位置上的原始内容（含它右侧的文字）
+      const chipPreRaw = this.contentController.getSpans({ start: chipOffset, end: chipOffset });
+
       this.contentController.addBuilderSpan(chip, { offset: chipOffset });
+
+      // ⚠️ **登记必须紧跟插入，不能等到最后**：下面的补尾换行会**同步**触发 onWillChange，
+      // 而那一刻 chip 已经在文档里了 —— 记录捕获时要拿当时的侧表反查它的身份
+      //（见 fillBuilderPaths）。登记晚一步，那条记录里的 chip 就没有路径，
+      // 重做时会被当成"无路径"跳过，表现为"重做后附件不见了"。
+      // 补尾换行的位移由 trackAttachmentShift 正常跟（它排在所有守卫之前）
+      this.registerAttachment(chipOffset, relativePath);
+
+      // ⚠️ **chip 的插入必须显式记一条，而且要排在补尾换行【之前】**
+      //   - 不记：`addBuilderSpan` 静默，整次插入对记录系统不可见 → 撤销删不到 chip
+      //   - 记晚了（排在补尾换行之后）：随后合并进来的那条记录起点比 chip 靠后，
+      //     而 `takePrefix(栈顶.after, 起点差)` 取的是**旧坐标**下的前导 ——
+      //     chip 那一格还没被记进去，于是把 chip 的位置取成它后面的文字，正文串行
+      // 包在原子区间里，`mergeIntoTop` 会把它与补换行那几条合成**一条**记录
+      this.pushRecord(this.buildBuilderInsertRecord(chipOffset, relativePath, caret, chipPreRaw));
 
       if (needTrailing) {
         // 后置换行开启的是 chip【之后】那一段，用输入样式。
@@ -3785,9 +3918,6 @@ export class MemoEditorController {
 
       // 光标落到 chip 下方那一行的行首，用户可以接着输入（与 addImage 一致）
       this.contentController.setCaretOffset(chipOffset + 2);
-
-      this.registerAttachment(chipOffset, relativePath);
-      // 以上几步都会被 onWillChange 自动捕获，并由原子区间合并成一条记录
     } catch (error) {
       console.error(`[file] 插入附件失败: ${JSON.stringify(error)}`);
     } finally {
@@ -3796,7 +3926,57 @@ export class MemoEditorController {
   }
 
   /**
-   * 把新插入的 chip 登记进附件侧表。
+   * 手工造一条"在 chipOffset 处插入了一个附件 chip"的内容记录。
+   *
+   * 【为什么必须手工造】`addBuilderSpan` 是**静默**的 —— 不触发任何内容回调，
+   * 所以 `onWillChange` 那条自动捕获路径**永远看不到这一格**；不记的话撤销删不到它、
+   * 重做也插不回来。
+   *
+   * 【结构照抄 `onWillChange` 的"插入"分支】旧侧 = 插入点所在的**整 span**
+   *（`preRaw`，**必须在 chip 插进去之前读**），新侧 = 它的左半 + chip + 它的右半。
+   * 两侧覆盖**同一段区域**，与框架自己产出的插入记录同构。
+   *
+   * ⚠️ **chip 那一格必须从这一刻起就算在坐标里**。试过"旧侧留空、新侧只放 chip"，
+   * 后果是后续几条记录再合并进来时，`mergeIntoTop` 按 `takePrefix(栈顶.after, 起点差)`
+   * 取前导会**整体错位一格**（把 chip 的位置取成它后面的文字），正文串行
+   *（实测：`abcdef` 中间插附件 → 撤销得 `abcdef\ndef`）。
+   *
+   * `offset` 只有捕获时有用（重放只认 `value`）。
+   */
+  private buildBuilderInsertRecord(chipOffset: number, relativePath: string, caretBefore: number,
+    preRaw: Array<RichEditorSpan>): ChangeRecord {
+    const record = new ChangeRecord();
+    record.kind = 'content';
+    record.changeStart = chipOffset;
+    record.caretBefore = caretBefore;
+    const beforeStart = preRaw.length > 0 ? minSpanStart(preRaw) : chipOffset;
+    const beforeSpans = toSnapshots(preRaw);
+    const beforeEnd = beforeStart + spansTotalLength(beforeSpans);
+    const afterSpans: Array<SpanSnapshot> = [];
+    if (chipOffset > beforeStart) {
+      for (const span of clipSpans(preRaw, beforeStart, chipOffset)) {
+        afterSpans.push(span);
+      }
+    }
+    afterSpans.push({ kind: 'builder', value: relativePath, length: 1, offset: chipOffset });
+    if (beforeEnd > chipOffset) {
+      for (const span of clipSpans(preRaw, chipOffset, beforeEnd)) {
+        afterSpans.push(span);
+      }
+    }
+    record.beforeStart = beforeStart;
+    record.beforeSpans = beforeSpans;
+    record.afterStart = beforeStart;
+    record.afterSpans = afterSpans;
+    record.caretAfter = chipOffset + 1;
+    return record;
+  }
+
+  /**
+   * 把刚插入的 chip 登记进附件侧表。
+   *
+   * **两个调用点**：`addFileChip`（用户插入）与 `insertBuilderSpan`（撤销/重做重放）——
+   * 两条路都必须"插完立刻登记"，因为插入 chip 不触发任何内容回调，侧表不会自跟踪。
    *
    * ⚠️ 位置**以框架实际放置的结果为准**，不靠推算：插入 chip 本身不触发内容回调（实测），
    * 落在哪一格没有直接信号，索性插完读回来。

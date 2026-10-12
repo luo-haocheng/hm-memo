@@ -4,12 +4,18 @@ import { ParagraphStyleSnapshot } from './ParagraphStyle';
 /**
  * 一个 span 的轻量快照（已经裁剪到变更区间内）
  *
- * 文本块用 value 存内容；图片块用 image* 字段。
- * P1 阶段不产生图片快照（遇到含图的变更会清空历史），字段先留着供 P3 使用。
+ * 文本块用 value 存内容；图片块用 image* 字段；附件块（builder）用 value 存相对路径。
  */
 export interface SpanSnapshot {
-  kind: 'text' | 'image';
-  /** 文本内容；图片块为空 */
+  kind: 'text' | 'image' | 'builder';
+  /**
+   * 文本块：文本内容
+   * 附件块：附件相对路径 `<uuid>/<原文件名>`，与 `MemoBlock.value` 同口径。
+   *   ⚠️ **它不是从 span 里读来的** —— chip 的 span 里没有任何文件名信息
+   *   （`valueResourceStr` 只是个占位空格），只能由控制器拿 `offset` 去附件侧表反查后填上
+   *   （见 `MemoEditorController.fillBuilderPaths`）
+   * 图片块：空
+   */
   value: string;
   /** 占用的坐标单位数（spanRange[1] - spanRange[0]），插入时用它推进游标 */
   length: number;
@@ -19,6 +25,13 @@ export interface SpanSnapshot {
   imagePixelMap?: image.PixelMap;
   /** 图片：内置 / 资源图 */
   imageResource?: ResourceStr;
+  /**
+   * 附件块专用：捕获那一刻 chip 的编辑器坐标，唯一的用途是去附件侧表反查 `value`。
+   *
+   * ⚠️ **只在捕获时有效，重放时绝不读它** —— 原子合并会把快照按引用搬进别的记录，
+   * 坐标随之陈旧；重放一律只认 `value`（相对路径）。读它会把 chip 插到错位置。
+   */
+  offset?: number;
 }
 
 /**

@@ -3,8 +3,10 @@ import { fileIo, fileUri } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { FileChipInfo } from './FileChipInfo';
-// 字体权重的反向映射搬到 SpanMapping，与撤销/重做链路共用同一份，避免两份拷贝漂移
-import { fontWeightResult2Value } from './SpanMapping';
+// 字体权重的反向映射搬到 SpanMapping，与撤销/重做链路共用同一份，避免两份拷贝漂移。
+// 同理，`isBuilderSpan` / `parseResourceIdFromUri` 也搬去了那边 —— 快照层必须能把
+// 附件 chip 与真图片区分开（见 FILE_ATTACHMENT_REVIEW.md §六），而本文件会反向依赖它
+import { fontWeightResult2Value, isBuilderSpan, parseResourceIdFromUri } from './SpanMapping';
 import { normalizeParagraphStyle, paragraphContaining } from './ParagraphStyle';
 // 调色板：用来判断一个色值是"用户选的自定义色"还是"主题色"（见 isPaletteColor）
 import { COLOR_LIST } from '../common/Constants';
@@ -164,6 +166,38 @@ export function resolveAttachmentPath(uiContext: UIContext, relativePath: string
     return '';
   }
   return `${context.filesDir}/${ATTACHMENT_DIR_NAME}/${relativePath}`;
+}
+
+/**
+ * 附件相对路径 → `FileChipInfo`；文件不存在 / 取不到 context 时返回 undefined。
+ *
+ * 【为什么抽出来】**重建与撤销/重做两条路径要做同一件事**：解析路径 → 确认副本还在 →
+ * 造 chip 信息。各写一份迟早漂移，尤其"文件缺失就跳过"这条约定 —— 漏了就会插出一个
+ * 点了打不开的死 chip。
+ *
+ * 调用方拿到 undefined 时应当**整块跳过**（宁可少一个 chip），原因已在内部记过日志。
+ */
+export function attachmentInfoOf(uiContext: UIContext, relativePath: string): FileChipInfo | undefined {
+  const absolutePath = resolveAttachmentPath(uiContext, relativePath);
+  if (absolutePath === '') {
+    return undefined;
+  }
+  try {
+    if (!fileIo.accessSync(absolutePath)) {
+      console.error(`[file] 附件副本不存在，跳过: ${relativePath}`);
+      return undefined;
+    }
+  } catch (error) {
+    console.error(`[file] 检查附件副本失败，跳过: ${relativePath}. Cause: ${JSON.stringify(error)}`);
+    return undefined;
+  }
+  const name = attachmentNameOf(relativePath);
+  return {
+    uri: fileUri.getUriFromPath(absolutePath),
+    name: name,
+    mimeType: mimeOfFileName(name),
+    relativePath: relativePath,
+  };
 }
 
 /** 手写笔迹文件名 → 绝对路径（沙箱内）。与图片、附件同一口径：存档只留文件名 */
@@ -356,12 +390,6 @@ function builtinImageNameById(resourceId: number): string | undefined {
   return undefined;
 }
 
-/** 从 "resource:///<id>" 形式的 URI 里取出资源 id */
-function parseResourceIdFromUri(uri: string): number | undefined {
-  const match = uri.match(/resource:\/\/\/(\d+)/);
-  return match ? Number(match[1]) : undefined;
-}
-
 /**
  * 编辑器返回的图片 span → 内置图名称；相册图或未登记的资源返回 undefined。
  *
@@ -381,38 +409,6 @@ export function builtinImageNameOf(span: RichEditorSpan): string | undefined {
     ? parseResourceIdFromUri(resourceStr)
     : resourceStr.id;
   return resourceId === undefined ? undefined : builtinImageNameById(resourceId);
-}
-
-/**
- * 这个 span 是不是**文件附件 chip**（builder span）。
- *
- * 【为什么需要】真机实测（见 FILE_ATTACHMENT_REVIEW.md §一）：框架**会**把 builder span
- * 经由 `getSpans()` 返回，但把它伪装成 image span 的形状 —— `imageStyle` 有值、占 1 个坐标单位，
- * 而 `valueResourceStr` 只是个**占位空格**，既不是 `resource:///<id>`，也没有 pixelMap。
- *
- * 所以判据是「排他」的：真实图片必然要么有 pixelMap（相册图）、要么能解析出资源 id（内置图），
- * 两者都不具备的 image 形状 span 就是 builder span。
- *
- * ⚠️ 这与 SDK 声明矛盾 —— `getSpans()` 的返回类型是
- * `Array<RichEditorImageSpanResult | RichEditorTextSpanResult>`，其中并不含 builder。
- * 但运行时确实把它塞进了前者的形状里；真机做了对照测试（附件 vs 待办勾选框）才确认下来。
- */
-export function isBuilderSpan(span: RichEditorSpan): boolean {
-  const imageSpan = span as RichEditorImageSpanResult;
-  if (imageSpan.imageStyle === undefined) {
-    return false; // 文本 span
-  }
-  if (imageSpan.valuePixelMap !== undefined) {
-    return false; // 相册图
-  }
-  const resourceStr = imageSpan.valueResourceStr;
-  if (resourceStr === undefined) {
-    return true; // 无图源的 image 形状 —— 不是真图片
-  }
-  if (typeof resourceStr !== 'string') {
-    return false; // Resource 对象 = 内置图
-  }
-  return parseResourceIdFromUri(resourceStr) === undefined;
 }
 
 /**
@@ -646,26 +642,10 @@ export class Memo {
    */
   private addAttachmentSpan(controller: RichEditorController, block: MemoBlock, offset: number,
     buildChip: (info: FileChipInfo) => CustomBuilder, uiContext: UIContext): boolean {
-    const absolutePath = resolveAttachmentPath(uiContext, block.value);
-    if (absolutePath === '') {
-      return false;
+    const info = attachmentInfoOf(uiContext, block.value);
+    if (info === undefined) {
+      return false; // 副本缺失：整块跳过，原因已在 attachmentInfoOf 内部记过日志
     }
-    try {
-      if (!fileIo.accessSync(absolutePath)) {
-        console.error(`[file] 附件副本不存在，跳过重建: ${block.value}`);
-        return false;
-      }
-    } catch (error) {
-      console.error(`[file] 检查附件副本失败，跳过重建: ${block.value}. Cause: ${JSON.stringify(error)}`);
-      return false;
-    }
-    const name = attachmentNameOf(block.value);
-    const info: FileChipInfo = {
-      uri: fileUri.getUriFromPath(absolutePath),
-      name: name,
-      mimeType: mimeOfFileName(name),
-      relativePath: block.value,
-    };
     controller.addBuilderSpan(buildChip(info), { offset: offset });
     return true;
   }

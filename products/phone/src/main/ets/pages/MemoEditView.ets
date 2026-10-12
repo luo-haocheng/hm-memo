@@ -1,4 +1,4 @@
-import { Memo, MemoEditorArea, MemoEditorController, resolveInkPath } from 'memo_editor';
+import { FileChip, FileChipInfo, Memo, MemoEditorArea, MemoEditorController, resolveInkPath } from 'memo_editor';
 import { KVStore, MemoService, SystemCategory, UserCategory } from 'data_source';
 import { KeyboardAvoidMode } from '@kit.ArkUI';
 import { util } from '@kit.ArkTS';
@@ -76,6 +76,27 @@ struct MemoEditView {
     }
   }
 
+  /**
+   * 附件 chip 的构建入口 —— 撤销 / 重做重建附件时用。
+   *
+   * `addBuilderSpan` 只收零参 `CustomBuilder`，而 builder 必须在**组件作用域**里造
+   *（要闭包组件的 this 与 UI 上下文）；撤销 / 重做按钮就在本页面，所以工厂只能由这里提供。
+   *
+   * ⚠️ 与 `MemoEditorArea.fileChip` 是**有意的重复**（接线各一份）。不合成一个的理由：
+   * 反向往上递（让 MemoEditorArea 把工厂交给本页）会让父组件持有子组件的闭包 ——
+   * 子组件先销毁，父组件手里就是个悬垂引用；而把按钮挪进 MemoEditorArea 会动到已验证的工具栏结构。
+   * chip 的**外观本体**在 FileChip 组件里（两处共用），这里只有接线，改外观不必来这边。
+   */
+  @Builder
+  fileChip(info: FileChipInfo) {
+    FileChip({
+      info: info,
+      onOpen: (target: FileChipInfo) => {
+        this.editorController.openFile(target, this.uiContext);
+      },
+    });
+  }
+
   @Builder
   toolBar() {
     if (!this.isMemoSaved) {
@@ -89,7 +110,13 @@ struct MemoEditView {
           .backgroundColor($r('sys.color.background_secondary'))
           .opacity(this.editorController.currRecordIdx <= 0 ? 0.3 : 1)
           .onClick(() => {
-            this.editorController.unDo(this.uiContext);
+            // 外层箭头是"工厂"（调用时造一次、带数据），内层箭头才是 CustomBuilder
+            //（零参，框架稍后调）—— 与插入附件那条路同一个用法
+            this.editorController.unDo(this.uiContext, (info: FileChipInfo) => {
+              return (): void => {
+                this.fileChip(info);
+              };
+            });
           });
 
         Image($r('app.media.redo'))
@@ -101,7 +128,11 @@ struct MemoEditView {
           .backgroundColor($r('sys.color.background_secondary'))
           .opacity(this.editorController.currRecordIdx >= this.editorController.historyLength - 1 ? 0.3 : 1)
           .onClick(() => {
-            this.editorController.reDo(this.uiContext);
+            this.editorController.reDo(this.uiContext, (info: FileChipInfo) => {
+              return (): void => {
+                this.fileChip(info);
+              };
+            });
           });
 
         Image($r('app.media.checkmark'))
