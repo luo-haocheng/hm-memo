@@ -2385,7 +2385,37 @@ export class MemoEditorController {
     if (firstIdx < 0) {
       firstIdx = lastIdx;
     }
-    return paragraphs.slice(firstIdx, lastIdx + 1);
+    const covered = paragraphs.slice(firstIdx, lastIdx + 1);
+    // ⚠️ **端点在"刚出现的空行"上时，把框架漏掉的那一段补回来**（见 `emptyParagraphAt`）。
+    // 上面那句"取 `range[0] <= 端点` 的最后一段"这时挑中的是**上一段** —— 图片 / 附件那一段 ——
+    // 对齐 / 缩进于是作用到了它上面（照片真的会跑偏、缩进则被静默吃掉）。
+    //
+    // 判据：挑中的那段在端点处就结束了（`range[1] <= 端点`）⇒ 端点并不在它里面。
+    // 正常落在某段内部时 `range[1] > 端点`，这一整块不触发。
+    const emptyTail = this.emptyParagraphAt(end);
+    if (emptyTail !== undefined && covered[covered.length - 1].range[1] <= end) {
+      covered.pop();
+      covered.push(emptyTail);
+    }
+    return covered;
+  }
+
+  /**
+   * 端点落在"刚出现的空行"上时，合成一个空段落；否则返回 undefined。
+   *
+   * 【为什么需要】见 `paragraphsInRange` 的注释 —— 这种空行（文档末尾、光标停在最后一个换行
+   * 之后，插图 / 插附件补出来的那个换行就是典型）框架**不报段落**，
+   * "取 `range[0] <= 端点` 的最后一段"于是落到上一段去。
+   *
+   * 合成段落只用**默认样式**（空对象）：空行本来就该是 `Start` + 无缩进，
+   * 而 `isStartAligned({})` / `indentLevelOf({})` 正好给出"可以缩进、可以对齐"的结论，
+   * 与用户对一条空行的预期一致。
+   */
+  private emptyParagraphAt(position: number): RichEditorParagraphResult | undefined {
+    if (!this.isRightAfterNewline(position)) {
+      return undefined;
+    }
+    return { range: [position, position], style: {} };
   }
 
   /** position 所在段落的**当前生效**样式（带 leadingMargin 的实际尺寸）；取不到返回 undefined */
@@ -2799,12 +2829,44 @@ export class MemoEditorController {
    */
   private paragraphBoundsAt(position: number): RichEditorRange {
     const range = this.getParagraphRange(position, position);
-    const start = range.start ?? position;
+    let start = range.start ?? position;
     const end = range.end ?? position;
+    // ⚠️ **"刚出现的空行"要把行首抬回来**：position 前面那一格是换行 ⇒ position 本身就是行首。
+    // 但 `getParagraphs()` **不一定**为这种空行报一个段落（实测：插图 / 插附件补出来的那个
+    // 尾换行之后就是如此），上面那句"取 `range[0] <= position` 的最后一段"于是落到了
+    // **上一段** —— 图片 / 附件那一段。表现：在图片下面那一行点列表 / 待办，
+    // 标记被插到图片**前面**，随后段落维护又把图片让开，看着就像"列表跑到文字与图片之间那一行"。
+    //
+    // 只抬**行首**、且只在"框架给的起点确实更靠前"时才动：其余情形（前一格是普通字符、
+    // 或段落起点本来就等于 position）一概不碰，保证这是纯粹补缺、不改既有行为。
+    // 段尾仍用框架报的值 —— 真正的空行它本来就是 position，不会动。
+    if (start < position && this.isRightAfterNewline(position)) {
+      start = position;
+    }
     if (start > 0 && this.todoMarkAt(start - 1) !== undefined) {
       return { start: start - 1, end: end };
     }
     return { start: start, end: end };
+  }
+
+  /**
+   * position 前面那一格是不是换行 —— 是的话 position 就是**行首**。
+   *
+   * 只读一格：`getSpans({start: position - 1, end: position})` 回的是含起点的那个 span（实测口径），
+   * 正好就是那一格所在 span；再借 `neighborAt` 判它是不是换行。读不到一律按 false（保守，
+   * 与 `canInsertHeadMark` 同款处理）。
+   */
+  private isRightAfterNewline(position: number): boolean {
+    if (position <= 0) {
+      return false;
+    }
+    try {
+      const spans = this.contentController.getSpans({ start: position - 1, end: position });
+      return neighborAt(spans, position - 1) === 'newline';
+    } catch (error) {
+      console.error(`[list] 判断行首失败: ${JSON.stringify(error)}`);
+      return false;
+    }
   }
 
   /**
