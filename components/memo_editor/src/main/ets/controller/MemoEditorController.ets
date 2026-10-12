@@ -8,6 +8,7 @@ import {
   builtinImageStyle,
   calcDesiredSize,
   doneTextColor,
+  isTodoMarkResourceStr,
   Memo,
   MemoBlock,
   mimeOfFileName,
@@ -516,6 +517,16 @@ export class MemoEditorController {
   private historyRecords: Array<ChangeRecord> = [];
   // 正在执行撤销 / 重做：程序化调用会【同步】触发内容变更回调，期间必须忽略它们
   private isRestoring: boolean = false;
+  /**
+   * 抑制自动捕获的嵌套深度（> 0 时 `onWillChange` 不建记录）。
+   *
+   * 【为什么需要】有些用户动作由**多条底层变更**组成，而它们各自的形态都进不了
+   * `mergeIntoTop` 的合成规则（两条记录得覆盖同一段区域），硬并会得到两侧不等长的记录。
+   * 这类动作改为"抑制自动捕获 + 手工推一条形状正确的记录"，点待办勾选框就是第一个用例
+   *（删旧图 + 插新图，只有 1 格）。与 `isRestoring` 的区别：那个是"撤销/重做本身产生的回声"，
+   * 这个是"一个新的用户动作，只是它要自己记账"。
+   */
+  private suppressCaptureDepth: number = 0;
   // 正在补「图片单独成段」的换行：补换行本身会同步触发一轮 willChange / didChange，用它防递归
   private isRepairing: boolean = false;
   // 勾选框被点中、但光标还没落定：等落定信号再判（见 onTodoMarkTap）
@@ -757,8 +768,8 @@ export class MemoEditorController {
     // 附件侧表在变更【前】的副本：chip 的文件名只能从这里取（span 里没有），
     // 而下面 trackAttachmentDelete 会就地删掉命中那条 —— 所以副本必须留在它之前。
     // 撤销/重做期间不建记录，也就用不上副本
-    const preAttachments = (this.isRestoring || this.attachments.length === 0)
-      ? [] : this.attachments.slice();
+    const preAttachments = (this.isRestoring || this.suppressCaptureDepth > 0
+      || this.attachments.length === 0) ? [] : this.attachments.slice();
 
     // 附件删除跟踪：必须放在下面所有早返回【之前】—— 删掉附件是全链路里
     // 唯一能得知"哪个附件没了"的时机（插附件不触发任何回调，删附件才触发）。
@@ -767,7 +778,9 @@ export class MemoEditorController {
     // 重建期间由 trackAttachmentDelete 内部按 isRebuilding 自行跳过
     this.trackAttachmentDelete(value.rangeBefore);
 
-    if (this.isRestoring) {
+    // 抑制期间同样不建记录 —— 那个动作会自己推一条（见 suppressCaptureDepth 的注释）。
+    // 删除跟踪照样要跑（它已在上面），因为抑制的只是"记账"，内容确实变了
+    if (this.isRestoring || this.suppressCaptureDepth > 0) {
       return;
     }
 
@@ -1268,6 +1281,25 @@ export class MemoEditorController {
   }
 
   /**
+   * 进入"不自动记账"的区间：期间的底层内容变更不会被 `onWillChange` 记入历史，
+   * 由调用方在结束后**手工推一条形状正确的记录**。可嵌套。
+   *
+   * 什么时候该用它：一次用户动作由多条底层变更组成，而它们各自的形态都进不了
+   * `mergeIntoTop`（那要求两条记录覆盖**同一段区域**）。点待办勾选框即是一例 ——
+   * 删旧图 + 插新图，两侧都只该是那 1 格。
+   */
+  beginSuppressCapture() {
+    this.suppressCaptureDepth += 1;
+  }
+
+  /** 结束"不自动记账"的区间 */
+  endSuppressCapture() {
+    if (this.suppressCaptureDepth > 0) {
+      this.suppressCaptureDepth -= 1;
+    }
+  }
+
+  /**
    * 记录入栈。
    * 优先尝试合并（原子操作 > 连续同类编辑）；否则截断"未来"（撤销后再编辑会让重做栈失效）后入栈，
    * 并在超出上限时淘汰最早的记录。
@@ -1485,6 +1517,28 @@ export class MemoEditorController {
     }
     this.insertSpans(spans, insertStart, uiContext, buildChip);
     this.contentController.setCaretOffset(caret);
+    // 内容还原之后，把待办的"已完成"灰按勾选框状态重算一遍 —— 灰色不进历史，
+    // 这是它唯一的兜底时机（见 refreshTodoDoneStyles 的注释）。
+    // ⚠️ 两个收窄，避免平白覆盖用户在已完成待办上手动改的颜色：
+    //   ① 只挂在**内容类**记录之后（纯样式 / 段落的撤销直接在上面 return 掉了）
+    //   ② 只有这条记录**动到了勾选框**才重算
+    if (this.touchesTodoMark(record)) {
+      this.refreshTodoDoneStyles();
+    }
+  }
+
+  /** 这条记录的两侧有没有动到待办勾选框（勾选状态只可能随它变） */
+  private touchesTodoMark(record: ChangeRecord): boolean {
+    return this.hasTodoMarkImage(record.beforeSpans) || this.hasTodoMarkImage(record.afterSpans);
+  }
+
+  private hasTodoMarkImage(spans: Array<SpanSnapshot>): boolean {
+    for (const span of spans) {
+      if (span.kind === 'image' && isTodoMarkResourceStr(span.imageResource)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 逐段把快照里的旧样式应用回去（样式类记录的撤销） */
@@ -1617,7 +1671,18 @@ export class MemoEditorController {
     const resource = span.imageResource;
     if (resource !== undefined) {
       // 内置图：样式是固定常量
-      this.contentController.addImageSpan(resource, { offset: offset, imageStyle: builtinImageStyle() });
+      const options: RichEditorImageSpanOptions = { offset: offset, imageStyle: builtinImageStyle() };
+      // ⚠️ **待办勾选框必须把点击手势一并挂上**：gesture 只能在插入时给，
+      // 不挂的话撤销 / 重做还原出来的勾选框是"死"的（点不动，而保存重开走的是
+      // `Memo.mapBlock2ImageSpan` 那条路、那边挂了，所以只有撤销/重做这条会漏）
+      if (isTodoMarkResourceStr(resource)) {
+        options.gesture = {
+          onClick: () => {
+            this.onTodoMarkTap();
+          },
+        };
+      }
+      this.contentController.addImageSpan(resource, options);
       return;
     }
     const pixelMap = span.imagePixelMap;
@@ -3113,10 +3178,28 @@ export class MemoEditorController {
       return;
     }
     const resource = builtinImageResource(nextName);
-    if (!resource) {
-      console.error(`Unknown builtin image: ${nextName}`);
+    const originalResource = builtinImageResource(hit.name);
+    if (!resource || !originalResource) {
+      console.error(`Unknown builtin image: ${nextName} / ${hit.name}`);
       return;
     }
+    // 【为什么要手工记账】换图 = 删旧图 + 插新图，两条底层变更。
+    // 它们**进不了 `mergeIntoTop`** —— 那要求两条记录覆盖同一段区域，而"删图"那条只有 1 格、
+    // "插图"那条会把右侧文字一起带上（实测 4 格），硬并会得到两侧不等长的记录，
+    // 撤销时多删 / 少删。所以这里抑制自动捕获，改推**一条恰好 1 格**的记录：
+    // 旧侧 `[圆环]`、新侧 `[勾]`，两侧同区域。
+    const record = new ChangeRecord();
+    record.kind = 'content';
+    record.changeStart = hit.offset;
+    const caretNow = this.contentController.getCaretOffset();
+    record.caretBefore = caretNow >= 0 ? caretNow : hit.offset;
+    record.beforeStart = hit.offset;
+    record.beforeSpans = [{ kind: 'image', value: '', length: 1, imageResource: originalResource }];
+    record.afterStart = hit.offset;
+    record.afterSpans = [{ kind: 'image', value: '', length: 1, imageResource: resource }];
+    record.caretAfter = hit.offset + 1;
+
+    this.beginSuppressCapture();
     try {
       this.contentController.deleteSpans({ start: hit.offset, end: hit.offset + 1 });
       this.contentController.addImageSpan(resource, {
@@ -3128,7 +3211,11 @@ export class MemoEditorController {
           },
         },
       });
-      // 变灰作用于勾选框之后、本行末尾之前的全部文字
+      // 换图成功即可记账（放在变灰**之前**：变灰不是内容变更，它失败了也不该丢掉这条记录）
+      this.pushRecord(record);
+      // 变灰作用于勾选框之后、本行末尾之前的全部文字。
+      // 这一步**不进历史**：灰色是显示态，撤销/重做之后由 `refreshTodoDoneStyles` 按
+      // 勾选状态重算（见那里的注释）
       const line = this.todoTextRange(hit.offset);
       const textStart = line.start ?? hit.offset + 1;
       const textEnd = line.end ?? textStart;
@@ -3137,6 +3224,8 @@ export class MemoEditorController {
       }
     } catch (error) {
       console.error(`Failed to toggle todo mark. Cause: ${JSON.stringify(error)}`);
+    } finally {
+      this.endSuppressCapture();
     }
   }
 
@@ -3149,9 +3238,20 @@ export class MemoEditorController {
    *   ② 待办为空行时（一行只有一个勾选框），按段尾取会把下一行的文字一并算进来
    */
   private todoTextRange(markOffset: number): RichEditorRange {
+    return this.todoTextRangeIn(this.contentController.getSpans(), markOffset);
+  }
+
+  /**
+   * `todoTextRange` 的实现，但用**已经读好的**整篇 span。
+   *
+   * 拆这一层是为了 `refreshTodoDoneStyles`：它要遍历所有勾选框，
+   * 若每个都自己调一次 `getSpans()`，就是"勾选框数 × 整篇读取"（每次都跨一次 native 边界）。
+   * 其余调用点仍走上面那个便捷版 —— 它们都在内容变更之后，确实需要**重新读一次**。
+   */
+  private todoTextRangeIn(spans: Array<RichEditorSpan>, markOffset: number): RichEditorRange {
     const start = markOffset + 1;
     let end = start;
-    for (const span of this.contentController.getSpans()) {
+    for (const span of spans) {
       const range = span.spanPosition.spanRange;
       if (range[1] <= start) {
         continue;
@@ -3169,6 +3269,42 @@ export class MemoEditorController {
       end = Math.max(end, range[1]);
     }
     return { start: start, end: end }; // 没有换行 = 这一行一直到文档末尾
+  }
+
+  /**
+   * 按勾选框状态重算"已完成"的灰。
+   *
+   * 【为什么是重算而不是记历史】灰色是**显示态**，不存在数据里
+   *（`Memo.applyTodoDoneStyles` 在重建时也是这么补一遍的）；`doneTextColor` 又是**幂等**的
+   *（主题色换主题色、调色板色只改 alpha），所以整体重算既不会漂移、也不会把用户自己
+   * 设的颜色冲掉。反过来把它记成 `textStyle` 记录，就得连带解决"内容变更 + 样式变更
+   * 合并成一步"的问题 —— 代价大得多（见 `UNDO_REDO_PLAN.md` §六 剩余待办）。
+   *
+   * 【为什么这一处能省掉记账】勾选状态**只随内容变**，而内容变更本身在历史里 ——
+   * 撤销/重做把内容还原之后重算一遍，灰色自然跟着对上。
+   * 于是 `toggleTodoMark` / `removeTodoMark` / 列表↔待办转换这三处的灰化都不用记账。
+   */
+  private refreshTodoDoneStyles() {
+    let spans: Array<RichEditorSpan>;
+    try {
+      spans = this.contentController.getSpans();
+    } catch (error) {
+      console.error(`[todo] 重算已完成样式失败: ${JSON.stringify(error)}`);
+      return;
+    }
+    for (const span of spans) {
+      const name = builtinImageNameOf(span);
+      if (name === undefined || toggledTodoMark(name) === undefined) {
+        continue;
+      }
+      const markOffset = span.spanPosition.spanRange[0];
+      const line = this.todoTextRangeIn(spans, markOffset);
+      const textStart = line.start ?? markOffset + 1;
+      const textEnd = line.end ?? textStart;
+      if (textEnd > textStart) {
+        this.applyDoneStyle(textStart, textEnd, name === TODO_MARK_DONE);
+      }
+    }
   }
 
   /**

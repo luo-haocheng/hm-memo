@@ -412,6 +412,24 @@ export function builtinImageNameOf(span: RichEditorSpan): string | undefined {
 }
 
 /**
+ * 这个**图源**是不是待办勾选框（圆环 / 勾）。
+ *
+ * 与 `builtinImageNameOf` 同一套解析口径，区别是入参 —— 那边要一个 span，
+ * 这边只要 `imageStyle.valueResourceStr`。撤销/重做重放内置图时手上只有图源，
+ * 却需要判断"要不要给它挂上点击切换的 gesture"（见 `insertImageSpan`）。
+ */
+export function isTodoMarkResourceStr(resourceStr: ResourceStr | undefined): boolean {
+  if (resourceStr === undefined) {
+    return false;
+  }
+  const resourceId = typeof resourceStr === 'string'
+    ? parseResourceIdFromUri(resourceStr)
+    : resourceStr.id;
+  const name = resourceId === undefined ? undefined : builtinImageNameById(resourceId);
+  return name !== undefined && toggledTodoMark(name) !== undefined;
+}
+
+/**
  * 按最长边上限计算解码目标尺寸。
  * 未超过上限时返回 undefined，表示按原始尺寸解码
  */
