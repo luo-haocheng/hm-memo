@@ -238,6 +238,16 @@ function isAlbumPhoto(span: RichEditorSpan): boolean {
 const HEAD_MARK_LOOKBACK = 4;
 
 /**
+ * 判定"刚删掉的这一格是不是列表标记的最后一个字符"时，最多往左看几格。
+ *
+ * 比 `HEAD_MARK_LOOKBACK` 大得多：那里只要够到"段首第一格"就够（照片 / chip 独占一段、
+ * 必定紧挨光标），而这里要一路够到**行首** —— 标记本身就有 6 格（`" ●    "`）起步
+ *（`" 1.   "` 也是 6 格，序号 / 字母越长越宽），4 格根本够不着。
+ * 判据只要求窗口内能看到行首；看不到就说明这一行比窗口长，那不可能是列表段落。
+ */
+const MARKER_LOOKBACK = 16;
+
+/**
  * 这一格是不是**挡路**的段首占位 —— 也就是「相册照片」或「附件 chip」。
  *
  * 这两类各自独占一段（`onDidChange` 的维护规则保证），段首那一格属于图片本身；
@@ -284,6 +294,21 @@ interface ParagraphFix {
 interface TodoMarkHit {
   offset: number;
   name: string;
+}
+
+/**
+ * 一处待摘除的列表标记。
+ *
+ * 用户在标记末尾（也就是正文开头）按退格时，框架只会删掉**最后一个空格** ——
+ * 那一下就足够把标记打散成"残缺的普通文本"（`" 1.  "` 不再匹配任何标记格式）。
+ * 这里记下整条标记的范围，由 `onDidChange` 把剩下的前缀也删掉，
+ * 表现为"退格一次，整个标记一起消失"。
+ */
+interface MarkerCollapse {
+  /** 标记的起点（= 行首） */
+  start: number;
+  /** 标记的完整长度（含已被框架删掉的那最后一格） */
+  length: number;
 }
 
 /**
@@ -488,11 +513,16 @@ export class MemoEditorController {
   private isRepairing: boolean = false;
   // 勾选框被点中、但光标还没落定：等落定信号再判（见 onTodoMarkTap）
   private pendingTodoTap: boolean = false;
-  // 点击勾选框那一刻的光标位置，供超时兜底判断"光标到底动没动"
+  // 点击勾选框那一刻的光标位置。
+  // 两个用途：① 供超时兜底判断"光标到底动没动"；② 点击结算后把光标还原回这里 ——
+  // 在 gesture 回调里读到的**就是点击前**的位置（框架此时还没动光标，见 onTodoMarkTap）
   private pendingTapCaret: number = -1;
   // 本次变更是不是"回车新建了一段"（值为换行的插入点）；-1 表示不是。
   // 在 onWillChange 里判定、onDidChange 里消费，用完即清
   private pendingEnterOffset: number = -1;
+  // 本次变更删掉的是"列表标记的最后一个字符"时，记下整条标记的范围；undefined 表示不是。
+  // 与 pendingEnterOffset 同款：在 onWillChange 里判定、onDidChange 里消费，用完即清
+  private pendingMarkerCollapse: MarkerCollapse | undefined = undefined;
   // 原子区间嵌套深度：大于 0 时，期间捕获的多条记录会合并成一条
   private atomicDepth: number = 0;
   // 本原子区间第一条记录会落在的下标。原子合并只能发生在本次区间产生的记录之间 ——
@@ -738,10 +768,23 @@ export class MemoEditorController {
     }
     afterRaw.sort((a, b) => a.spanPosition.spanRange[0] - b.spanPosition.spanRange[0]);
 
-    // 这次是不是"回车新建了一段"？判定见 isSingleNewline 的注释。
-    // 放在这里是为了只判一次 —— 下面记录怎么建、是不是纯删除，都不影响这个判定
-    this.pendingEnterOffset = (rangeStart === rangeEnd && isSingleNewline(afterRaw, rangeStart))
-      ? rangeStart : -1;
+    // 这次是不是"用户按了回车"？字符层面的判定见 isSingleNewline 的注释。
+    // 放在这里是为了只判一次 —— 下面记录怎么建、是不是纯删除，都不影响这个判定。
+    //
+    // ⚠️ **光看 `isSingleNewline` 不够**：它只回答"变更位置那一格是不是换行"，
+    // 分辨不出这个换行是谁敲的。而插图 / 插附件时补的前后换行（`addImage` / `addFileChip`）
+    // 恰好也是"纯插入 + 恰好一个换行"，同形 —— 于是会被当成回车，由 onDidChange 续接出
+    // 一个新的待办勾选框 / 列表标记。表现就是"光标停在待办段末尾插图，图片后面凭空多出一个待办"。
+    //
+    // 排除办法就是那两个"程序化改文档"的闸（与 mergeByWindow 里用的是同一套判据）：
+    //   - `atomicDepth > 0`：插图 / 插附件 / 摘旧标记插新标记这类复合操作
+    //   - `isRepairing`：补段落换行（applyParagraphFixes）
+    // 用户按回车永远落在这两个闸之外，所以不会漏判。
+    const isUserEnter = this.atomicDepth === 0 && !this.isRepairing
+      && rangeStart === rangeEnd && isSingleNewline(afterRaw, rangeStart);
+    this.pendingEnterOffset = isUserEnter ? rangeStart : -1;
+    // 上一次的摘除请求一律作废：只有下面纯删除那条分支才可能重新登记一个
+    this.pendingMarkerCollapse = undefined;
 
     const record = new ChangeRecord();
     record.changeStart = rangeStart;
@@ -753,6 +796,8 @@ export class MemoEditorController {
       if (rangeEnd <= rangeStart) {
         return; // 既没有新内容、也没有被删内容，没什么可记的
       }
+      // 删掉的这一格是不是列表标记的最后一格？是的话登记一次整条摘除（见 detectMarkerCollapse）
+      this.detectMarkerCollapse(rangeStart, rangeEnd);
       record.beforeStart = rangeStart;
       record.beforeSpans = clipSpans(
         this.contentController.getSpans({ start: rangeStart, end: rangeEnd }), rangeStart, rangeEnd);
@@ -828,6 +873,54 @@ export class MemoEditorController {
   }
 
   /**
+   * 判定这次删除是不是"把列表标记的最后一个字符删掉了"。
+   *
+   * 【只认最后一格】光标停在标记末尾（也就是正文开头）按退格时，退掉的正是那一格 ——
+   * 整条标记一次摘掉。删中间的空格不算：那样留下的行首本来就不再是列表段落，
+   * 照常一格一格删即可。
+   *
+   * 【为什么必须在 onWillChange 里判】只有这里 `getSpans()` 读到的还是**变更前**的内容，
+   * 标记此刻仍然完整，`markerOf` 一测就准。放到 onDidChange 再判，标记已经被删掉一格、
+   * 不再匹配任何格式，只能靠"把空格补回去试试"这类反推 —— 那等于把标记格式在第二处
+   * 重写一遍，迟早与 `ListMarker` 里的定义脱节。
+   *
+   * 判定成立时只**登记范围**，真正的摘除交给 `onDidChange`（那时框架那一下删除才生效、
+   * 坐标才对得上）—— 与 `pendingEnterOffset` 同一套路。
+   */
+  private detectMarkerCollapse(rangeStart: number, rangeEnd: number): void {
+    if (rangeEnd - rangeStart !== 1) {
+      return; // 只处理"删掉一格"（退格 / 前向删除 / 选中一格后删除）
+    }
+    const from = Math.max(0, rangeStart - MARKER_LOOKBACK);
+    let text: string;
+    try {
+      text = textInRange(this.contentController.getSpans({ start: from, end: rangeEnd }), from, rangeEnd);
+    } catch (error) {
+      console.error(`[list] 判定列表标记删除失败: ${JSON.stringify(error)}`);
+      return;
+    }
+    // 待删的那一格在末尾，行首要从它**左边**找，所以先把它摘掉再找换行
+    const head = text.substring(0, text.length - 1);
+    const breakAt = head.lastIndexOf('\n');
+    if (breakAt < 0 && from > 0) {
+      // 窗口里没有换行、窗口起点又不是文档开头 ⇒ 行首在窗口之外。
+      // 列表标记很短，够不到行首就说明这一行不是列表段落，放行
+      return;
+    }
+    const lineStart = breakAt >= 0 ? from + breakAt + 1 : 0;
+    // ⚠️ `markerOf` 是**前缀**匹配（`startsWith`），不是整行相等 —— 它回答的是
+    // "这一行是不是以标记开头"。所以光看它非 undefined 会把**行内任意位置**的删除都算进来
+    //（正文里删一个字，`" 1.   he"` 照样"以标记开头"），那就不是摘标记而是吃掉正文了。
+    // 必须再要求**匹配到的标记长度恰好等于「行首 → 删除点」的长度** ——
+    // 这一条才真正表达了"删掉的这一格就是标记的最后一个字符"。
+    const hit = markerOf(text.substring(lineStart - from));
+    if (hit === undefined || hit.text.length !== rangeEnd - lineStart) {
+      return;
+    }
+    this.pendingMarkerCollapse = { start: lineStart, length: hit.text.length };
+  }
+
+  /**
    * onDidChange —— 变更【后】触发，用来维护两类「内容各自成段」的原则：
    *
    *   - 相册照片与文件附件 chip 必须**独占一段**：前后两侧都得是换行
@@ -856,6 +949,9 @@ export class MemoEditorController {
     // 先把回车标记消费掉：下面几个分支都可能提前 return，留着会污染下一次变更
     const enterOffset = this.pendingEnterOffset;
     this.pendingEnterOffset = -1;
+    // 列表标记的摘除请求同理：先取走并清空，免得残留到下一次变更里误删
+    const markerCollapse = this.pendingMarkerCollapse;
+    this.pendingMarkerCollapse = undefined;
     // 重建内容 / 撤销重做期间不插手：那些变更不来自用户编辑。
     // isRepairing 是防递归 —— 下面补换行会同步触发一轮 willChange / didChange
     if (this.isRestoring || this.isRepairing) {
@@ -880,50 +976,50 @@ export class MemoEditorController {
     const from = Math.max(0, Math.min(rangeStart, rangeEnd) - 1);
     const to = Math.max(rangeStart, rangeEnd) + 1;
 
-    let spans: Array<RichEditorSpan>;
-    try {
-      spans = this.contentController.getSpans({ start: from, end: to });
-    } catch (error) {
-      console.error(`[image] 读取变更周边内容失败: ${JSON.stringify(error)}`);
-      return;
-    }
-
     // 用 Map 按插入位置去重：两张相邻图片时，前一张的"后侧"和后一张的"前侧"
     // 指向同一个插入位置，各插一个会凭空多出空段落
     const fixes: Map<number, ParagraphFix> = new Map<number, ParagraphFix>();
-    for (const span of spans) {
-      const range = span.spanPosition.spanRange;
-      // 相册照片与文件附件 chip 是**同一类**约束：都必须独占一段，前后都得是换行。
-      // chip 早期是按行内内容做的；能改成独占一段的依据见 FILE_ATTACHMENT_REVIEW.md
-      if (isAlbumPhoto(span) || isBuilderSpan(span)) {
-        // 前侧：左边是普通字符或另一个原子单元 → 已经和它挤在同一段了
-        if (neighborAt(spans, range[0] - 1) === 'other') {
+    try {
+      const spans = this.contentController.getSpans({ start: from, end: to });
+      for (const span of spans) {
+        const range = span.spanPosition.spanRange;
+        // 相册照片与文件附件 chip 是**同一类**约束：都必须独占一段，前后都得是换行。
+        // chip 早期是按行内内容做的；能改成独占一段的依据见 FILE_ATTACHMENT_REVIEW.md
+        if (isAlbumPhoto(span) || isBuilderSpan(span)) {
+          // 前侧：左边是普通字符或另一个原子单元 → 已经和它挤在同一段了
+          if (neighborAt(spans, range[0] - 1) === 'other') {
+            fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
+          }
+          // 后侧同理
+          if (neighborAt(spans, range[1]) === 'other') {
+            fixes.set(range[1], this.buildParagraphFix(range[1], range[1], spans, uiContext));
+          }
+          continue;
+        }
+        // 待办勾选框只能待在【段落开头】—— 图标前一格不是换行（也不是文档开头）就补一个。
+        // 这一条同时管住两种越界，它们是同一个条件：
+        //   在图标前打字   prev\nX[图标]  → prev\nX\n[图标]   打的字被挡回上一段
+        //   删掉图标前的换行 prev[图标]   → prev\n[图标]      两个待办不会被并成一行
+        const markName = builtinImageNameOf(span);
+        if (markName !== undefined && toggledTodoMark(markName) !== undefined
+          && neighborAt(spans, range[0] - 1) === 'other') {
           fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
         }
-        // 后侧同理
-        if (neighborAt(spans, range[1]) === 'other') {
-          fixes.set(range[1], this.buildParagraphFix(range[1], range[1], spans, uiContext));
-        }
-        continue;
       }
-      // 待办勾选框只能待在【段落开头】—— 图标前一格不是换行（也不是文档开头）就补一个。
-      // 这一条同时管住两种越界，它们是同一个条件：
-      //   在图标前打字   prev\nX[图标]  → prev\nX\n[图标]   打的字被挡回上一段
-      //   删掉图标前的换行 prev[图标]   → prev\n[图标]      两个待办不会被并成一行
-      const markName = builtinImageNameOf(span);
-      if (markName !== undefined && toggledTodoMark(markName) !== undefined
-        && neighborAt(spans, range[0] - 1) === 'other') {
-        fixes.set(range[0], this.buildParagraphFix(range[0], range[0] - 1, spans, uiContext));
-      }
+    } catch (error) {
+      console.error(`[image] 读取变更周边内容失败: ${JSON.stringify(error)}`);
     }
-    if (fixes.size === 0) {
-      return;
-    }
+
     const pending: Array<ParagraphFix> = [];
     for (const fix of fixes.values()) {
       pending.push(fix);
     }
-    this.applyParagraphFixes(pending);
+    if (pending.length > 0) {
+      this.applyParagraphFixes(pending);
+    }
+    // 摘除列表标记排在**最后**：它会删掉变更点左边那几格，
+    // 而图片维护按 rangeAfter 划出的窗口用的是"变更后、摘除前"的坐标 —— 必须先跑完维护
+    this.applyMarkerCollapse(markerCollapse);
   }
 
   /**
@@ -1002,6 +1098,36 @@ export class MemoEditorController {
       }
     } catch (error) {
       console.error(`[image] 补图片段落换行失败: ${JSON.stringify(error)}`);
+    } finally {
+      this.isRepairing = false;
+    }
+  }
+
+  /**
+   * 把上一次变更里"只剩残缺"的列表标记整条摘掉。
+   *
+   * 【为什么只删剩下的 length - 1 格】框架那一下删除已经把**最后一格**（用户按下的那一格）
+   * 删掉了，这里补的是前缀的其余部分。两个坐标都 ≤ 被删点，不受那次删除引起的位移影响。
+   *
+   * 【为什么撤销不会多出一格】这次删除会被 `onWillChange` 记成一条 content 记录，
+   * 但它的终点正好等于上一条（框架那次）的起点，`mergeDeleteIntoTop` 会把两条并成一条 ——
+   * 用户撤销一次就能还原整条标记。
+   *
+   * 必须包 `isRepairing`：这是 `onDidChange` 里的内容变更，不包的话紧接着的那轮
+   * 图片维护会读到半更新的文档（与退出列表、退出待办同一手法）。
+   */
+  private applyMarkerCollapse(collapse: MarkerCollapse | undefined): void {
+    if (collapse === undefined || collapse.length <= 1) {
+      return;
+    }
+    const start = collapse.start;
+    this.isRepairing = true;
+    try {
+      this.contentController.deleteSpans({ start: start, end: start + collapse.length - 1 });
+      // 光标落在标记原来的起点 —— 也就是这段正文的新开头
+      this.contentController.setCaretOffset(start);
+    } catch (error) {
+      console.error(`[list] 摘除列表标记失败: ${JSON.stringify(error)}`);
     } finally {
       this.isRepairing = false;
     }
@@ -2765,6 +2891,8 @@ export class MemoEditorController {
    */
   onTodoMarkTap() {
     this.pendingTodoTap = true;
+    // 此刻框架还没挪光标，所以这里读到的就是**点击前**的位置。
+    // 结算时（settleTodoTap）会用它把光标还原回去，别改成落定后再读
     this.pendingTapCaret = this.contentController.getCaretOffset();
     // 超时兜底：光标本来就落在"落定位置"时，框架不会触发 onSelectionChange（实测有这种情况），
     // 这时等不到事件，按点击时的光标结算 —— 光标一直没动，说明它正是落定位置。
@@ -2790,6 +2918,37 @@ export class MemoEditorController {
     const hit = this.todoMarkNearCaret(caret);
     if (hit !== undefined) {
       this.toggleTodoMark(hit);
+      // 换图之后再把光标放回点击前的位置 —— 顺序不能反，换图本身也可能挪动光标
+      this.restoreCaretAfterTodoTap();
+    }
+  }
+
+  /**
+   * 把光标放回**点击勾选框之前**的位置。
+   *
+   * 【跳转是怎么来的】点击勾选框会让框架把光标挪到被点那张图标的旁边 ——
+   * 落在前还是后取决于点的是左半还是右半（实测落 `offset` 或 `offset + 1`）。
+   * 这个移动正是触发 `onSelectionChange` 的原因，所以进到结算时它已经发生了。
+   * 换图（delete + addImageSpan）又不保证光标跟着回原位，于是用户
+   * "在别处写着字、点一下待办"，插入点就跑到勾选框旁边去了。
+   *
+   * 【为什么直接还原绝对坐标就够】换图是**等长**操作：删 1 格、在原位插回 1 格，
+   * 净位移为 0，勾选框之后的坐标一律不变 —— 所以点击前的坐标在换图之后依然指向同一处。
+   *
+   * `pendingTapCaret` 在 gesture 回调里抓的就是点击【前】的光标（见 onTodoMarkTap）。
+   * 拿不到光标（-1，编辑器没获焦）时不还原 —— 那时不存在"原位置"。
+   *
+   * ⚠️ 真机待验证：还原是在 `onSelectionChange` 的回调里做的，需确认框架不会在
+   * 之后的某一帧再把光标按点击位置重新落一次（若会，表现为"还原了一下又被拽回去"）。
+   */
+  private restoreCaretAfterTodoTap() {
+    if (this.pendingTapCaret < 0) {
+      return;
+    }
+    try {
+      this.contentController.setCaretOffset(this.pendingTapCaret);
+    } catch (error) {
+      console.error(`[todo] 还原点击前光标位置失败: ${JSON.stringify(error)}`);
     }
   }
 
