@@ -2693,7 +2693,9 @@ export class MemoEditorController {
    *
    * 【为什么不挂在每次光标移动上】这里要一次 `getParagraphs()` + 一次**全量** `getSpans()`，
    * 而 `onSelectionChange` 在打字时每敲一个字都会触发 —— 放进那条热路径代价太大。
-   * 弹窗打开时编辑器被遮住、光标动不了，前两个时机已经够了；第三个是兜底。
+   * 所以它只在**样式面板开着**的时候才被光标移动触发（面板是非模态的，开着也能选字/移光标，
+   * 见 `MemoEditorArea` 里 `openCustomDialog` 的 `isModal: false`）—— 那时打字不多、
+   * 而且正是"当前段落是谁"必须跟着走的时候。
    *
    * 判据与 `indentParagraph` / `setParagraphAlign` 里的逐段判断**逐字对应**，
    * 避免"看着能点、点了没反应"。注意两者口径**不同**（对齐多放行相册照片段落）。

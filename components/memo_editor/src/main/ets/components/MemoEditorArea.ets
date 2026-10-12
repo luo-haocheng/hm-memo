@@ -84,6 +84,16 @@ export struct MemoEditorArea {
    * 跟着重算。用 `@Local` 承接手指，只重绘进度条这一段；松手才把目标交给控制器。
    */
   @Local dragPositionMs: number = -1;
+  @Local styleDialogHeight: number = 0;
+  /** 编辑区（Stack）**底边**的全局 Y（vp）。与 `toolBarGlobalTopY` 一起算工具栏占多高 */
+  @Local editorBottomY: number = 0;
+  /**
+   * 底部工具栏**顶边**的全局 Y（vp）。
+   *
+   * 与 `editorBottomY` 相减 = "工具栏连同它的外边距占掉了屏幕底部多少高度"。
+   * 编辑区要在底部让出这么多，正文的最后几行才不会被它压住（见 `toolBarReservedHeight`）。
+   */
+  @Local toolBarGlobalTopY: number = 0;
   @Param @Require currentMemo: Memo;
   @Param @Require isMemoSaved: boolean;
   @Param @Require isDeletedMemo: boolean;
@@ -134,6 +144,8 @@ export struct MemoEditorArea {
             }
             // 关掉之后要把 id 清掉：它同时是 onSelectionChange 里"弹窗是否开着"的判据
             this.styleDialogId = -1;
+            // 高度一并清掉：下次打开要重新量，不能拿旧高度去算编辑区该让多少底部空间
+            this.styleDialogHeight = 0;
           });
       }
       .width('100%')
@@ -363,7 +375,14 @@ export struct MemoEditorArea {
       .justifyContent(FlexAlign.SpaceBetween);
     }
     .width('100%')
-    .padding({ left: 12, right: 12, bottom: AppStorage.get('BottomRectHeight') as number });
+    .padding({ left: 12, right: 12, bottom: AppStorage.get('BottomRectHeight') as number })
+    // 面板在 window 层，外面量不到它的高度 —— 让它自己报，编辑区据此在底部让出同样多的空间
+    .onAreaChange((_oldArea: Area, newArea: Area) => {
+      const height = newArea.height as number;
+      if (height > 0 && height !== this.styleDialogHeight) {
+        this.styleDialogHeight = height;
+      }
+    });
   }
 
   @Builder
@@ -418,13 +437,6 @@ export struct MemoEditorArea {
         justifyContent: FlexAlign.SpaceBetween,
         alignItems: ItemAlign.Center,
       }) {
-        Image($r('app.media.share'))
-          .width(24)
-          .fillColor($r('sys.color.font_primary'))
-          .onClick(() => {
-            // todo
-          });
-
         Image(this.currentMemo.isFavorite ? $r('app.media.star_fill') : $r('app.media.star'))
           .width(24)
           .fillColor($r('sys.color.font_primary'))
@@ -465,7 +477,7 @@ export struct MemoEditorArea {
           });
       }
       .padding(12)
-      .width('50%')
+      .width('30%')
       .borderRadius('50%')
       .backgroundColor($r('sys.color.background_tertiary'));
     }
@@ -489,8 +501,8 @@ export struct MemoEditorArea {
           .opacity(!this.isEditingTitle ? 1 : 0.4)
           .fillColor(COLOR_LIST[this.controller.colorIdx])
           .onClick(() => {
-            // 先把"光标所在段落能不能缩进"算出来 —— 弹窗一开，编辑器就被遮住、光标不再移动，
-            // 这里是判断"当前段落是谁"最可靠的时机（详见 refreshParagraphButtonState 的注释）
+            // 先把"光标所在段落能不能缩进"算一次。面板**非模态**，开着时光标照样能移 ——
+            // 那种情况下由 onSelectionChange 里的兜底分支重算（见那里）
             this.controller.refreshParagraphButtonState();
             this.getUIContext()
               .getPromptAction()
@@ -502,7 +514,15 @@ export struct MemoEditorArea {
                 alignment: DialogAlignment.Bottom,
                 transition: TransitionEffect.SLIDE,
                 keyboardAvoidMode: KeyboardAvoidMode.NONE,
+                backgroundColor: $r('sys.color.ohos_id_color_tooltip_background'),
                 offset: { dx: 0, dy: AppStorage.get('BottomRectHeight') as number },
+                // ⚠️ **非模态**（默认是 true 的模态弹窗）。这个面板本质是"浮在正文上的一条工具条"，
+                // 不是"必须回答才能继续"的对话框 —— 模态会把下面的编辑器整个锁住：选不了文字、
+                // 滚不动，连"选中一段再点加粗"这种最基本的用法都做不了。
+                isModal: false,
+                // 非模态下"点面板外面 = 关掉"更不能要：点正文是"我要选字"，
+                // 而不是"我不需要这个面板了"
+                autoCancel: false,
               })
               .then((dialogId: number) => {
                 this.styleDialogId = dialogId;
@@ -967,6 +987,27 @@ export struct MemoEditorArea {
    * 把编辑器拽回 10。下一帧又往前，来回抖。差的是**一帧的时间差**，容差挡不住。
    * 所以容差现在只用来避免重复调用，不再承担防回环的职责。
    */
+  /**
+   * 底部工具栏占掉的高度（vp）—— 编辑区要在底部让出这么多，正文才不会被它压住。
+   *
+   * 【为什么量"工具栏顶边 → Stack 底边"的距离，而不是"工具栏高度 + 外边距"】
+   * 那个外边距是随状态变的（编辑中 8vp、否则 `BottomRectHeight`；手写模式下还要再加一个
+   * 手写工具栏的高度）—— 量距离就不必跟着追这些分支。
+   *
+   * 【为什么用 globalPosition 相减】`Area.position` 的声明只写了 "local position"，
+   * 拿**全局坐标相减**就不必赌"local 到底相对谁"：两个量在同一套坐标系里，差值一定对。
+   *
+   * 量不到时回落到原来的 `BottomRectHeight`，即保持既有行为。
+   */
+  private toolBarReservedHeight(): number {
+    const fallback = AppStorage.get('BottomRectHeight') as number;
+    if (this.toolBarGlobalTopY <= 0 || this.editorBottomY <= 0) {
+      return fallback;
+    }
+    const reserved = this.editorBottomY - this.toolBarGlobalTopY;
+    return reserved > 0 ? reserved : fallback;
+  }
+
   private syncEditorToInk(inkOffset: number) {
     const editorOffset = this.editorScroller.currentOffset().yOffset;
     if (Math.abs(inkOffset - editorOffset) <= SCROLL_SYNC_TOLERANCE) {
@@ -1119,8 +1160,10 @@ export struct MemoEditorArea {
               // getParagraphs + 一次全量 getSpans，放进打字的热路径太贵。
               // 这里只刷新"能不能插段首标记"这一个**廉价**判据
               this.controller.refreshHeadMarkAvailability();
-              // 样式弹窗开着时兜底重算全部按钮的可用性。
-              // 正常情况弹窗会挡住编辑器、光标动不了，所以这条几乎不触发
+              // 样式弹窗开着时重算全部按钮的可用性。
+              // ⚠️ 面板是**非模态**的，所以光标准能在它开着的时候移动 —— 这条不是"兜底"，
+              // 而是"面板开着时按钮状态该怎么跟着走"的正经路径（也正是板块改非模态的目的：
+              // 选中一段 → 直接点加粗/缩进，不用先把面板关掉）
               if (this.styleDialogId >= 0) {
                 this.controller.refreshParagraphButtonState();
               }
@@ -1139,7 +1182,14 @@ export struct MemoEditorArea {
       .height('100%')
       .align(Alignment.Top)
       .scrollBar(BarState.Off)
-      .padding({ bottom: AppStorage.get('BottomRectHeight') as number })
+      // 底部让出**浮层占掉的那一段**：底部工具栏一直在（一直压着正文的最后几行），
+      // 样式面板打开时它更高。取两者中更高的那个。
+      // ⚠️ 内边距本身**不产生任何滚动**（内容仍贴着顶部排），只是把视口底边抬到浮层上沿 ——
+      // 于是正文不会"藏"在它们背后，用户一滚就能把任何一行挪上来看到
+      .padding({
+        bottom: Math.max(this.toolBarReservedHeight(),
+          (AppStorage.get('BottomRectHeight') as number) + this.styleDialogHeight),
+      })
       // 这里刻意**不设底色**：这行原是"画布压在编辑层下面时用来挡住它"的，
       // 现在画布永远在上层，它已无作用 —— 反而可能在原生 surface 旁露出来、
       // 与页面底色对不上而显出一条色带
@@ -1246,6 +1296,14 @@ export struct MemoEditorArea {
       }
       // 最上层：要压过画布（zIndex 2）
       .zIndex(3)
+      // 报出自己顶边的全局 Y —— 编辑区据此在底部让出同样多的空间（见 toolBarReservedHeight）。
+      // 外边距随状态变，所以这个值要跟着它更新，别只量一次
+      .onAreaChange((_oldArea: Area, newArea: Area) => {
+        const top = newArea.globalPosition.y as number;
+        if (top > 0 && top !== this.toolBarGlobalTopY) {
+          this.toolBarGlobalTopY = top;
+        }
+      })
       .margin({
         // 手写模式下要抬到画布自带工具栏的上面，否则两排工具叠在一起
         //（HANDWRITE_TOOLBAR_HEIGHT 的注释里有说明）
@@ -1261,6 +1319,8 @@ export struct MemoEditorArea {
       const height = newArea.height as number;
       if (height > 0) {
         this.editorAreaHeight = height;
+        // 底边的全局 Y：与工具栏顶边的全局 Y 相减 = 工具栏占掉多少（见 toolBarReservedHeight）
+        this.editorBottomY = (newArea.globalPosition.y as number) + height;
         // 只增不减：软键盘把页面压矮时不能让画布跟着缩，理由见 canvasBaseHeight 的注释
         if (height > this.canvasBaseHeight) {
           this.canvasBaseHeight = height;
