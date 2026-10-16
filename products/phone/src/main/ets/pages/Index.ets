@@ -1032,63 +1032,82 @@ struct Index {
 
   @Builder
   memoPreview(memo: Memo) {
-    Column() {
-      Text(memo.title)
-        .height(40)
-        .width('100%')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('sys.color.font_primary'))
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .opacity(this.curSystemCategory !== SystemCategory.DELETED_MEMO ? 1 : 0.4);
+    if (memo.isLocked && memo.isEnableLock) {
+      Column() {
+        Column({ space: 16 }) {
+          Image($r('app.media.info_shield'))
+            .width(64)
+            .height(64)
+            .fillColor($r('sys.color.font_fourth'));
 
-      Row({ space: 8 }) {
-        Row({ space: 8 }) {
-          Text(this.memoCateName(memo))
-            .maxLines(1)
-            .fontSize(11)
-            .fontColor(Color.White)
-            .constraintSize({ maxWidth: 100 })
-            .textOverflow({ overflow: TextOverflow.Ellipsis });
-
-          Image($r('app.media.arrowtriangle_down_fill'))
-            .width(10)
-            .height(10)
-            .fillColor(Color.White);
-        }
-        .padding(8)
-        .borderRadius('50%')
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.memoCateColor(memo));
-
-        Text(DateUtil.dateDisplay(memo.updateTime))
-          .fontSize(10)
-          .fontColor($r('sys.color.font_secondary'));
+          Text('此备忘已锁定')
+            .fontSize(12)
+            .fontColor($r('sys.color.font_fourth'));
+        };
       }
+      .height(300)
       .width('100%')
-      .padding({ left: 12, right: 12 });
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('sys.color.background_primary'));
+    } else {
+      Column() {
+        Text(memo.title)
+          .height(40)
+          .width('100%')
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('sys.color.font_primary'))
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .opacity(this.curSystemCategory !== SystemCategory.DELETED_MEMO ? 1 : 0.4);
 
-      RichEditor({ controller: this.previewTextController })
-        .width('100%')
-        .barState(BarState.Off)
-        .padding({ left: 0, right: 0 })
-        .hitTestBehavior(HitTestMode.None)
-        .enabled(this.curSystemCategory !== SystemCategory.DELETED_MEMO)
-        .onReady(() => {
-          // 预览是只读的（上面 hitTestBehavior 为 None），待办勾选框点不动，给个空实现
-          memo.rebuildContent(this.previewTextController, this.getUIContext(), () => {
-          }, (info: FileChipInfo) => {
-            // 附件 chip 的外观与编辑区共用 FileChip，只是不接点击
-            return (): void => {
-              this.previewFileChip(info);
-            };
+        Row({ space: 8 }) {
+          Row({ space: 8 }) {
+            Text(this.memoCateName(memo))
+              .maxLines(1)
+              .fontSize(11)
+              .fontColor(Color.White)
+              .constraintSize({ maxWidth: 100 })
+              .textOverflow({ overflow: TextOverflow.Ellipsis });
+
+            Image($r('app.media.arrowtriangle_down_fill'))
+              .width(10)
+              .height(10)
+              .fillColor(Color.White);
+          }
+          .padding(8)
+          .borderRadius('50%')
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor(this.memoCateColor(memo));
+
+          Text(DateUtil.dateDisplay(memo.updateTime))
+            .fontSize(10)
+            .fontColor($r('sys.color.font_secondary'));
+        }
+        .width('100%');
+
+        RichEditor({ controller: this.previewTextController })
+          .width('100%')
+          .barState(BarState.Off)
+          .padding({ left: 0, right: 0 })
+          .hitTestBehavior(HitTestMode.None)
+          .enabled(this.curSystemCategory !== SystemCategory.DELETED_MEMO)
+          .onReady(() => {
+            // 预览是只读的（上面 hitTestBehavior 为 None），待办勾选框点不动，给个空实现
+            memo.rebuildContent(this.previewTextController, this.getUIContext(), () => {
+            }, (info: FileChipInfo) => {
+              // 附件 chip 的外观与编辑区共用 FileChip，只是不接点击
+              return (): void => {
+                this.previewFileChip(info);
+              };
+            });
           });
-        });
+      }
+      .padding(16)
+      .height(300)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('sys.color.background_primary'));
     }
-    .padding(16)
-    .height(300)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor($r('sys.color.background_primary'));
   }
 
   @Builder
@@ -1114,7 +1133,7 @@ struct Index {
       .alignItems(VerticalAlign.Center);
 
       Row() {
-        Text(memo.value.description)
+        Text(memo.value.isLocked && memo.value.isEnableLock ? '已锁定' : memo.value.description)
           .maxLines(2)
           .fontSize(12)
           .fontWeight(FontWeight.Regular)
@@ -1292,7 +1311,7 @@ struct Index {
           }
           .layoutWeight(0);
 
-          Text(memo.value.description)
+          Text(memo.value.isLocked && memo.value.isEnableLock ? '已锁定' : memo.value.description)
             .maxLines(1)
             .fontSize(12)
             .fontWeight(FontWeight.Regular)
