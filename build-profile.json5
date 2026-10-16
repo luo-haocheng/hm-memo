@@ -1,20 +1,5 @@
 {
   "app": {
-    "signingConfigs": [
-      {
-        "name": "default",
-        "type": "HarmonyOS",
-        "material": {
-          "certpath": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B80E94E1442C66C0A1BE2EB22647DDBA8F3CE7118B795A95BF820D4C3B049921B080F385C0B7005",
-          "profile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.p7b",
-          "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\HaoCheng Luo\\.ohos\\config\\default_HMMemo_wOKM-o1qwqcgrn2JJKHr3HAxhZy6mlwmVImCceDdm64=.p12",
-          "storePassword": "0000001BFCFD167E4C9CD289E8BB03C38D925817FA66CBBFEF5376E79F411C249AC9CD16DD385135EC67BE"
-        }
-      }
-    ],
     "products": [
       {
         "name": "default",
